@@ -1,7 +1,7 @@
 const express = require("express");
 const Booking = require("../models/Booking");
 const Pincode = require("../models/Pincode");
-const { protect } = require("../middleware/auth");
+const { protect, admin } = require("../middleware/auth");
 const { calculatePrice } = require("../utils/helpers");
 
 const router = express.Router();
@@ -124,20 +124,28 @@ router.get("/:bookingId", async (req, res) => {
 });
 
 // ✅ GET: Fetch all bookings (for admin/debug)
-router.get("/", async (req, res) => {
+// router.get("/", async (req, res) => {
+//   try {
+//     const bookings = await Booking.find().sort({ createdAt: -1 });
+//     res.json({
+//       success: true,
+//       data: bookings,
+//     });
+//   } catch (error) {
+//     console.error("Get all bookings error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error while fetching bookings",
+//     });
+//   }
+// });
+router.get("/", protect, admin, async (req, res) => {
   try {
     const bookings = await Booking.find().sort({ createdAt: -1 });
-    res.json({
-      success: true,
-      data: bookings,
-    });
+    res.json({ success: true, data: bookings });
   } catch (error) {
     console.error("Get all bookings error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while fetching bookings",
-    });
+    res.status(500).json({ success: false, message: "Server error while fetching bookings" });
   }
 });
-
 module.exports = router;
