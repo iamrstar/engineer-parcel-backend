@@ -13,24 +13,32 @@ const bookingSchema = new mongoose.Schema(
     serviceType: {
       type: String,
       required: true,
-      enum: ["courier", "shifting", "local", "international"],
+      enum: ["courier", "shifting", "local", "international", "surface", "air", "express", "premium"],
     },
     senderDetails: {
-      name: String,
-      phone: String,
+      name: { type: String, required: true },
+      phone: { type: String, required: true },
       email: String,
-      address: String,
-      pincode: String,
+      address: { type: String, required: true },
+      pincode: { type: String, required: true },
+      city: String,
+      state: String,
+      landmark: String,
     },
     receiverDetails: {
-      name: String,
-      phone: String,
+      name: { type: String, required: true },
+      phone: { type: String, required: true },
       email: String,
-      address: String,
-      pincode: String,
+      address: { type: String, required: true },
+      pincode: { type: String, required: true },
+      city: String,
+      state: String,
+      landmark: String,
     },
     packageDetails: {
-      weight: Number,
+      weight: { type: Number, required: true },
+      weightUnit: { type: String, enum: ["g", "kg"], default: "g" },
+      volumetricWeight: Number,
       dimensions: {
         length: Number,
         width: Number,
@@ -40,6 +48,8 @@ const bookingSchema = new mongoose.Schema(
       value: Number,
       fragile: Boolean,
     },
+    pickupPincode: String,
+    deliveryPincode: String,
     pickupDate: Date,
     pickupSlot: String,
     deliveryDate: Date,
@@ -57,13 +67,23 @@ const bookingSchema = new mongoose.Schema(
       default: "pending",
     },
     trackingHistory: [
-      {
-        status: String,
-        location: String,
-        timestamp: { type: Date, default: Date.now },
-        description: String,
-      },
-    ],
+  {
+    status: String,
+    location: String,
+    timestamp: { type: Date, default: Date.now },
+    description: String,
+  },
+],
+
+estimatedDelivery: {
+  type: String, // Can be "3-5 days", "7-10 days", or a date string
+  default: null,
+},
+    
+    parcelImage: String,
+    couponCode: String,
+    couponDiscount: { type: Number, default: 0 },
+    insuranceRequired: { type: Boolean, default: false },
     pricing: {
       basePrice: Number,
       additionalCharges: Number,
@@ -75,7 +95,11 @@ const bookingSchema = new mongoose.Schema(
       enum: ["pending", "paid", "failed", "refunded"],
       default: "pending",
     },
-    paymentMethod: String,
+    paymentMethod: {
+      type: String,
+      enum: ["COD", "Online"],
+      default: "COD",
+    },
     notes: String,
   },
   { timestamps: true }
