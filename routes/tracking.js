@@ -67,13 +67,28 @@ router.get("/:bookingId", async (req, res) => {
  */
 router.get("/status/:bookingId", async (req, res) => {
   try {
-    const booking = await Booking.findOne({ bookingId: req.params.bookingId }).select("trackingHistory status");
+    const booking = await Booking.findOne({ bookingId: req.params.bookingId })
+      .select("trackingHistory status estimatedDelivery");
 
     if (!booking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
     const latest = booking.trackingHistory.at(-1);
+
+    // Only format if a real date exists
+    let estimatedDelivery = "Not Found";
+    if (booking.estimatedDelivery) {
+      const dt = new Date(booking.estimatedDelivery);
+      if (!isNaN(dt.getTime())) {
+        estimatedDelivery = dt.toLocaleDateString("en-IN", {
+          weekday: "short",
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
+      }
+    }
 
     res.json({
       success: true,
@@ -82,6 +97,7 @@ router.get("/status/:bookingId", async (req, res) => {
         location: latest?.location || "Not available",
         description: latest?.description || "No updates yet",
         timestamp: latest?.timestamp || null,
+        estimatedDelivery,
       },
     });
   } catch (error) {
@@ -89,6 +105,7 @@ router.get("/status/:bookingId", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error while checking status" });
   }
 });
+
 
 /**
  * ===============================
@@ -120,4 +137,3 @@ router.post("/update", async (req, res) => {
 });
 
 module.exports = router;
- 
