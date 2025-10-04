@@ -45,18 +45,29 @@ router.post("/", async (req, res) => {
         success: false,
         message: `Delivery location ${receiverDetails.pincode} is not serviceable`,
       });
-    }
+    } 
+
+    
+
+     const distance = Math.abs(
+      pickupPincode.deliveryDays - deliveryPincode.deliveryDays
+    );
 
     // 🧮 Calculate pricing
-    const pricing = calculatePrice({
-      serviceType,
-      weight: packageDetails.weight || 1,
-      distance: Math.abs(
-        pickupPincode.deliveryDays - deliveryPincode.deliveryDays
-      ),
-      value: packageDetails.value || 0,
-      fragile: packageDetails.fragile || false
-    });
+    // 🧮 Calculate pricing
+const pricing = calculatePrice({
+  serviceType,
+  distance: Math.abs(
+    pickupPincode.deliveryDays - deliveryPincode.deliveryDays
+  ),
+  weight: packageDetails.weight || 1,
+  weightUnit: packageDetails.weightUnit || "kg", // kg or g
+  length: packageDetails.dimensions?.length || 0,
+  width: packageDetails.dimensions?.width || 0,
+  height: packageDetails.dimensions?.height || 0,
+  fragile: packageDetails.fragile || false,
+  value: packageDetails.value || 0,
+});
 
     // ✅ Create booking (bookingId auto-generated in schema)
     const booking = new Booking({
