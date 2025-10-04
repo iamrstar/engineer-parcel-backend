@@ -65,6 +65,7 @@ const contactRoutes = require("./routes/contact");
 const pincodeRoutes = require("./routes/pincode");
 const trackingRoutes = require("./routes/tracking");
 const userRoutes = require("./routes/users");
+const pricingRoutes = require("./routes/pricing");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/bookings", bookingRoutes);
@@ -72,6 +73,7 @@ app.use("/api/contact", contactRoutes);
 app.use("/api/pincode", pincodeRoutes);
 app.use("/api/tracking", trackingRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/calculate-price", pricingRoutes);
 
 // ✅ Health check
 app.get("/api/health", (req, res) => {
