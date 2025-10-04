@@ -1,202 +1,151 @@
-const express = require("express")
-const jwt = require("jsonwebtoken")
-const User = require("../models/User")
-const { protect } = require("../middleware/auth")
-const { validateRegister, validateLogin } = require("../utils/validators")
-const router = express.Router()
+const express = require("express");
+const Booking = require("../models/Booking");
+const Pincode = require("../models/Pincode");
+const { protect, admin } = require("../middleware/auth");
+const { calculatePrice } = require("../utils/helpers");
 
-// Generate JWT Token
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: "30d",
-  })
-}
+const router = express.Router();
 
-// @desc    Register user
-// @route   POST /api/auth/register
-// @access  Public
-router.post("/register", async (req, res) => {
+// ✅ POST: Create Booking
+router.post("/", async (req, res) => {
   try {
-    const { error } = validateRegister(req.body)
-    if (error) {
+    console.log("Received booking data:", JSON.stringify(req.body, null, 2));
+
+    const {
+      senderDetails,
+      receiverDetails,
+      serviceType,
+      packageDetails,
+      pickupDate,
+      pickupSlot,        // ✅ Include this field
+      notes,
+      paymentMethod      // ✅ Include this field
+    } = req.body;
+
+    // 🔍 Validate pincodes
+    const pickupPincode = await Pincode.findOne({
+      pincode: senderDetails.pincode,
+      isServiceable: true,
+    });
+
+    const deliveryPincode = await Pincode.findOne({
+      pincode: receiverDetails.pincode,
+      isServiceable: true,
+    });
+
+    if (!pickupPincode) {
       return res.status(400).json({
         success: false,
-        message: error.details[0].message,
-      })
+        message: `Pickup location ${senderDetails.pincode} is not serviceable`,
+      });
     }
 
-    const { name, email, phone, password } = req.body
-
-    // Check if user exists
-    const userExists = await User.findOne({ email })
-    if (userExists) {
+    if (!deliveryPincode) {
       return res.status(400).json({
         success: false,
-        message: "User already exists with this email",
-      })
+        message: `Delivery location ${receiverDetails.pincode} is not serviceable`,
+      });
     }
 
-    // Check if phone exists
-    const phoneExists = await User.findOne({ phone })
-    if (phoneExists) {
-      return res.status(400).json({
-        success: false,
-        message: "User already exists with this phone number",
-      })
-    }
+    // 🧮 Calculate pricing
+    const pricing = calculatePrice({
+      serviceType,
+      weight: packageDetails.weight || 1,
+      distance: Math.abs(
+        pickupPincode.deliveryDays - deliveryPincode.deliveryDays
+      ),
+      value: packageDetails.value || 0,
+      fragile: packageDetails.fragile || false
+    });
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      phone,
-      password,
-    })
+    // ✅ Create booking (bookingId auto-generated in schema)
+    const booking = new Booking({
+      userId: req.user ? req.user.id : null,
+      serviceType,
+      senderDetails,
+      receiverDetails,
+      packageDetails,
+      pickupDate,
+      pickupSlot,
+      pricing,
+      notes,
+      paymentMethod,
+      trackingHistory: [
+        {
+          status: "pending",
+          location: senderDetails.address,
+          description: "Booking created successfully",
+        },
+      ],
+    });
 
-    // Generate verification token
-    const verificationToken = user.generateVerificationToken()
-    await user.save()
+    await booking.save();
 
     res.status(201).json({
       success: true,
-      message: "User registered successfully",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        token: generateToken(user._id),
-      },
-    })
+      message: "Booking created successfully",
+      data: booking,
+    });
   } catch (error) {
-    console.error("Register error:", error)
+    console.error("Create booking error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error during registration",
-    })
+      message: "Server error during booking creation",
+      error: error.message,
+    });
   }
-})
+});
 
-// @desc    Login user
-// @route   POST /api/auth/login
-// @access  Public
-router.post("/login", async (req, res) => {
+// ✅ GET: Fetch booking by bookingId
+router.get("/:bookingId", async (req, res) => {
   try {
-    const { error } = validateLogin(req.body)
-    if (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.details[0].message,
-      })
-    }
+    const booking = await Booking.findOne({
+      bookingId: req.params.bookingId,
+    }).populate("userId", "name email phone");
 
-    const { email, password } = req.body
-
-    // Check for user
-    const user = await User.findOne({ email }).select("+password")
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      })
-    }
-
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: "Account is deactivated",
-      })
-    }
-
-    // Check password
-    const isMatch = await user.matchPassword(password)
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      })
-    }
-
-    // Update last login
-    user.lastLogin = new Date()
-    await user.save()
-
-    res.json({
-      success: true,
-      message: "Login successful",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        token: generateToken(user._id),
-      },
-    })
-  } catch (error) {
-    console.error("Login error:", error)
-    res.status(500).json({
-      success: false,
-      message: "Server error during login",
-    })
-  }
-})
-
-// @desc    Get current user
-// @route   GET /api/auth/me
-// @access  Private
-router.get("/me", protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id)
-    res.json({
-      success: true,
-      data: user,
-    })
-  } catch (error) {
-    console.error("Get user error:", error)
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    })
-  }
-})
-
-// @desc    Update user profile
-// @route   PUT /api/auth/profile
-// @access  Private
-router.put("/profile", protect, async (req, res) => {
-  try {
-    const { name, phone, address } = req.body
-
-    const user = await User.findById(req.user.id)
-    if (!user) {
+    if (!booking) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
-      })
+        message: "Booking not found",
+      });
     }
-
-    // Update fields
-    if (name) user.name = name
-    if (phone) user.phone = phone
-    if (address) user.address = address
-
-    await user.save()
 
     res.json({
       success: true,
-      message: "Profile updated successfully",
-      data: user,
-    })
+      data: booking,
+    });
   } catch (error) {
-    console.error("Update profile error:", error)
+    console.error("Get booking error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-    })
+    });
   }
-})
+});
 
-module.exports = router
+// ✅ GET: Fetch all bookings (for admin/debug)
+// router.get("/", async (req, res) => {
+//   try {
+//     const bookings = await Booking.find().sort({ createdAt: -1 });
+//     res.json({
+//       success: true,
+//       data: bookings,
+//     });
+//   } catch (error) {
+//     console.error("Get all bookings error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error while fetching bookings",
+//     });
+//   }
+// });
+router.get("/", protect, admin, async (req, res) => {
+  try {
+    const bookings = await Booking.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: bookings });
+  } catch (error) {
+    console.error("Get all bookings error:", error);
+    res.status(500).json({ success: false, message: "Server error while fetching bookings" });
+  }
+});
+module.exports = router;
