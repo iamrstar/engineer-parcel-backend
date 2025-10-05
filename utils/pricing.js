@@ -10,10 +10,7 @@ const calculatePricing = ({ weight, serviceType = "surface", paymentMethod = "co
   const basePrice = roundedWeight * ratePerKg;
 
   // COD charges (optional)
-  let codCharges = 0;
-  if (paymentMethod === "cod") {
-    codCharges = Math.min(50, basePrice * 0.02); // 2% max ₹50
-  }
+ 
 
   const subtotal = basePrice + codCharges;
   const tax = subtotal * 0.18; // 18% GST
