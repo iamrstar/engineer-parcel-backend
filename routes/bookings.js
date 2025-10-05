@@ -5,9 +5,11 @@ const { protect, admin } = require("../middleware/auth");
 const { calculatePrice } = require("../utils/helpers");
 
 const router = express.Router();
-
+ 
 // ✅ POST: Create Booking
 router.post("/", async (req, res) => {
+    console.log("Received booking payload:", req.body); // <-- add this
+
   try {
     console.log("Received booking data:", JSON.stringify(req.body, null, 2));
 
@@ -45,7 +47,7 @@ router.post("/", async (req, res) => {
         success: false,
         message: `Delivery location ${receiverDetails.pincode} is not serviceable`,
       });
-    } 
+    }
 
     
 
@@ -97,12 +99,18 @@ const pricing = calculatePrice({
       message: "Booking created successfully",
       data: booking,
     });
-  } catch (error) {
-    console.error("Create booking error:", error);
+  } catch (err) {
+     console.error("Booking validation error:", err);
+     if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ success: false, message: messages.join(", ") });
+    }
+        res.status(400).json({ success: false, message: err.message || "unkwon error" }); // <-- send exact validation message
+
     res.status(500).json({
       success: false,
       message: "Server error during booking creation",
-      error: error.message,
+      error: err.message,
     });
   }
 });
