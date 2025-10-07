@@ -22,7 +22,7 @@ router.post("/", async (req, res) => {
       pickupSlot,        // ✅ Include this field
       notes,
       paymentMethod      // ✅ Include this field
-    } = req.body;
+    } = req.body; 
 
     // 🔍 Validate pincodes
     const pickupPincode = await Pincode.findOne({
@@ -167,4 +167,30 @@ router.get("/", protect, admin, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error while fetching bookings" });
   }
 });
+
+// POST /api/payments/confirm-booking
+router.post("/confirm-booking", async (req, res) => {
+  try {
+    const { bookingData, razorpay_payment_id, razorpay_order_id } = req.body;
+
+    // 1️⃣ Create booking
+    const booking = new Booking({
+      ...bookingData,
+      paymentMethod: "Online",
+      paymentStatus: "Paid",
+      trackingHistory: [
+        { status: "pending", location: bookingData.senderDetails.address, description: "Booking created after successful payment" }
+      ]
+    });
+
+    await booking.save();
+
+    // 2️⃣ Send success response
+    res.status(201).json({ success: true, booking });
+  } catch (err) {
+    console.error("Error creating booking after payment:", err);
+    res.status(500).json({ success: false, message: "Failed to create booking" });
+  }
+});
+
 module.exports = router;
