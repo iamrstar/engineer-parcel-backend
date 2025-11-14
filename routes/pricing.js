@@ -5,21 +5,31 @@ const router = express.Router();
 
 router.post("/", (req, res) => {
   try {
-    const { serviceType, weight, distance, value, fragile } = req.body;
+    const {
+      serviceType,
+      weight = 1,
+      weightUnit = "kg",
+      distance = 0,
+      value = 0,
+      fragile = false,
+      dimensions = {},
+    } = req.body;
 
     if (!serviceType || !weight) {
       return res.status(400).json({ success: false, message: "Missing serviceType or weight" });
     }
 
-    // Ceiling weight
-    const ceilWeight = Math.ceil(weight);
-
+    // Calculate pricing
     const pricing = calculatePrice({
       serviceType,
-      weight: ceilWeight,
-      distance: distance || 0,
-      value: value || 0,
-      fragile: fragile || false
+      distance,
+      weight,
+      weightUnit,
+      length: dimensions.length || 0,
+      width: dimensions.width || 0,
+      height: dimensions.height || 0,
+      fragile,
+      value,
     });
 
     res.json({ success: true, data: pricing });
