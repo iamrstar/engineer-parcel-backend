@@ -1,66 +1,62 @@
 exports.calculatePrice = ({
   serviceType,
-  distance,
-  weight,
-  weightUnit,
-  length,
-  width,
-  height,
-  fragile,
-  value,
+  weight = 1,
+  weightUnit = "kg",
+  length = 0,
+  width = 0,
+  height = 0,
+  fragile = false,
+  value = 0,
 }) => {
-  // Convert grams to kg if needed
-  let actualWeight = weightUnit === "g" ? weight / 1000 : weight;
+  // 🧮 Convert grams → kilograms if needed
+  const unit = weightUnit?.toLowerCase();
+  const actualWeight = unit === "g" || unit === "gram" ? weight / 1000 : Number(weight);
 
-  // 🔹 Volumetric weight calculation
-  // Formula: (L * W * H) / 2700
+  // 📦 Volumetric Weight Formula: (L × W × H) / 2700
   let volumetricWeight = 0;
   if (length && width && height) {
     volumetricWeight = (length * width * height) / 2700;
   }
 
-  // 🔹 Chargeable weight = max(actualWeight, volumetricWeight), then ceil
-  const chargeableWeight = Math.ceil(Math.max(actualWeight, volumetricWeight));
+  // 💰 Base price per kg
+  const rateTable = {
+    surface: 100,
+    air: 220,
+    express: 350,
+    premium: 500,
+  };
+  const pricePerKg = rateTable[serviceType?.toLowerCase()] || rateTable.surface;
 
-  // 🔹 Base price per kg (change values here if needed)
-  let pricePerKg;
-  switch (serviceType?.toLowerCase()) {
-    case "surface":
-      pricePerKg = 100; // ₹100 per kg for Surface
-      break;
-    case "air":
-      pricePerKg = 220; // ₹220 per kg for Air
-      break;
-    case "express":
-      pricePerKg = 350; // example, change if needed
-      break;
-    case "premium":
-      pricePerKg = 500; // example, change if needed
-      break;
-    default:
-      pricePerKg = 100; // default fallback
-  }
+  // ⚖️ Choose higher weight for pricing
+  let chargeableWeight = Math.max(actualWeight, volumetricWeight);
 
-  // 🔹 Base price calculation
-  const basePrice = pricePerKg * chargeableWeight;
+  // 🚀 Round up to next integer kg
+  chargeableWeight = Math.ceil(chargeableWeight);
 
-  // 🔹 Other charges
-  const distanceCharge = distance ? distance * 0.5 : 0; // ₹0.5 per km
-  const fragileCharge = fragile ? 30 : 0; // flat ₹30 if fragile
-  const valueCharge = value ? value * 0.02 : 0; // 2% of declared value
+  // 🔹 Base price (minimum ₹100)
+  const basePrice = Math.max(pricePerKg * chargeableWeight, 100);
 
-  const totalBeforeTax = basePrice + distanceCharge + fragileCharge + valueCharge;
-  const tax = totalBeforeTax * 0.18; // 18% GST
+  // 🔹 Additional charges
+  const fragileCharge = fragile ? 30 : 0;
+  const valueCharge = value ? value * 0.02 : 0; // 2% of goods value
+
+  // 🔹 Tax (GST 18%)
+  const totalBeforeTax = basePrice + fragileCharge + valueCharge;
+  const tax = totalBeforeTax * 0.18;
   const totalAmount = totalBeforeTax + tax;
 
+  // ✅ Determine which weight type was used
+  const usedWeightType = actualWeight >= volumetricWeight ? "Actual Weight" : "Volumetric Weight";
+
   return {
-    basePrice: parseFloat(basePrice.toFixed(2)),
-    chargeableWeight,
+    actualWeight: parseFloat(actualWeight.toFixed(2)),
     volumetricWeight: parseFloat(volumetricWeight.toFixed(2)),
-    distanceCharge: parseFloat(distanceCharge.toFixed(2)),
+    chargeableWeight: parseFloat(chargeableWeight.toFixed(2)),
+    basePrice: parseFloat(basePrice.toFixed(2)),
     fragileCharge,
     valueCharge: parseFloat(valueCharge.toFixed(2)),
     tax: parseFloat(tax.toFixed(2)),
     totalAmount: parseFloat(totalAmount.toFixed(2)),
+    usedWeightType,
   };
 };
