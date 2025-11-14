@@ -35,17 +35,19 @@ router.post("/", async (req, res) => {
     const distance = Math.abs(pickupPincode.deliveryDays - deliveryPincode.deliveryDays);
 
     // Calculate pricing
-    const pricing = calculatePrice({
-      serviceType,
-      distance,
-      weight: packageDetails.weight || 1,
-      weightUnit: packageDetails.weightUnit || "kg",
-      length: packageDetails.dimensions?.length || 0,
-      width: packageDetails.dimensions?.width || 0,
-      height: packageDetails.dimensions?.height || 0,
-      fragile: packageDetails.fragile || false,
-      value: packageDetails.value || 0,
-    });
+    // Calculate pricing
+const pricing = calculatePrice({
+  serviceType,
+  distance,
+  weight: packageDetails.weight || 1,
+  weightUnit: packageDetails.weightUnit || "kg", // <-- Gram / kg handled
+  length: packageDetails.dimensions?.length || 0,
+  width: packageDetails.dimensions?.width || 0,
+  height: packageDetails.dimensions?.height || 0,
+  fragile: packageDetails.fragile || false,
+  value: packageDetails.value || 0,
+});
+
 
     // Create booking
     const booking = new Booking({
