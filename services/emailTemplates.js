@@ -9,10 +9,15 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
     <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#f9fafb; padding:20px; border-radius:10px;">
       <h2 style="color:#ff6600; text-align:center;">📦 Booking Confirmed!</h2>
       <p>Hi <strong>${recipient.name}</strong>,</p>
-      <p>Your parcel booking has been <strong>successfully confirmed</strong>.</p>
+<p>
+  Your booking <strong style = "color:#ff6600;">${booking.bookingId}</strong> has been  confirmed — 
+  <a style = "color:#ff6600;" href="https://www.engineersparcel.in/track-order">
+    to track and get live updates
+  </a>
+</p>
 
       <div style="background:#fff; padding:15px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1);">
-        <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
+        <p><strong>Tracking ID:</strong> ${booking.bookingId}</p>
         <p><strong>Service Type:</strong> ${booking.serviceType}</p>
         <p><strong>Pickup Date:</strong> ${new Date(booking.pickupDate).toLocaleDateString()}</p>
         <p><strong>Total Amount:</strong> ₹${booking.pricing.totalAmount}</p>
@@ -24,6 +29,13 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
 
       <h3 style="color:#333;">Delivery Details</h3>
       <p>${booking.receiverDetails.address}, ${booking.receiverDetails.city}, ${booking.receiverDetails.state} - ${booking.receiverDetails.pincode}</p>
+        
+        <p style="margin-top:10px;">
+  Track your order anytime: 
+  <a style = "color:#ff6600;" href="https://www.engineersparcel.in/track-order">
+    https://www.engineersparcel.in/track-order
+  </a> —  get live updates
+</p>
 
       <p style="margin-top:20px;">Thank you for choosing <strong>EngineersParcel</strong>! 🚚</p>
       <hr style="margin-top:20px;">
@@ -64,7 +76,7 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
   `;
 
   await sendEmail({
-    to: "engineersparcel@gmail.com",
+    to: "rajchatterji20@gmail.com",
     subject: `📢 New Booking Received - ${booking.bookingId}`,
     html: adminHtml,
     text: `New booking received: ${booking.bookingId}`,
