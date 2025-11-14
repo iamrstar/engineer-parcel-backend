@@ -76,7 +76,7 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
   `;
 
   await sendEmail({
-    to: "rajchatterji20@gmail.com",
+    to: "engineersparcel@gmail.com",
     subject: `📢 New Booking Received - ${booking.bookingId}`,
     html: adminHtml,
     text: `New booking received: ${booking.bookingId}`,
