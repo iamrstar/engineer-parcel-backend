@@ -108,8 +108,22 @@ estimatedDelivery: {
 // Generate booking ID
 bookingSchema.pre("validate", async function (next) {
   if (!this.bookingId) {
-    const count = await mongoose.model("Booking").countDocuments();
-    this.bookingId = `EP${Date.now()}${String(count + 1).padStart(4, "0")}`;
+    const today = new Date();
+
+    const dd = String(today.getDate()).padStart(2, "0");
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const yy = String(today.getFullYear()).slice(-2);
+
+    const datePart = `${dd}${mm}${yy}`;
+
+    // count bookings created today
+    const count = await mongoose.model("Booking").countDocuments({
+      bookingId: new RegExp(`^EP${datePart}`)
+    });
+
+    const counter = String(count + 1).padStart(3, "0");
+
+    this.bookingId = `EP${datePart}${counter}`;
   }
   next();
 });
