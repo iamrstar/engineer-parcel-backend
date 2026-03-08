@@ -13,14 +13,14 @@ const bookingSchema = new mongoose.Schema(
     serviceType: {
       type: String,
       required: true,
-      enum: ["courier", "shifting", "local", "international", "surface", "air", "express", "premium"],
+      enum: ["courier", "shifting", "local", "international", "surface", "air", "express", "premium", "campus-parcel"],
     },
     senderDetails: {
       name: { type: String, required: true },
       phone: { type: String, required: true },
       email: String,
       address: { type: String, required: true },
-      pincode: { type: String, required: true },
+      pincode: { type: String },
       city: String,
       state: String,
       landmark: String,
@@ -30,7 +30,7 @@ const bookingSchema = new mongoose.Schema(
       phone: { type: String, required: true },
       email: String,
       address: { type: String, required: true },
-      pincode: { type: String, required: true },
+      pincode: { type: String },
       city: String,
       state: String,
       landmark: String,
@@ -67,19 +67,19 @@ const bookingSchema = new mongoose.Schema(
       default: "pending",
     },
     trackingHistory: [
-  {
-    status: String,
-    location: String,
-    timestamp: { type: Date, default: Date.now },
-    description: String,
-  },
-],
+      {
+        status: String,
+        location: String,
+        timestamp: { type: Date, default: Date.now },
+        description: String,
+      },
+    ],
 
-estimatedDelivery: {
-  type: String, // Can be "3-5 days", "7-10 days", or a date string
-  default: null,
-},
-    
+    estimatedDelivery: {
+      type: String, // Can be "3-5 days", "7-10 days", or a date string
+      default: null,
+    },
+
     parcelImage: String,
     couponCode: String,
     couponDiscount: { type: Number, default: 0 },
@@ -128,5 +128,5 @@ bookingSchema.pre("validate", async function (next) {
   next();
 });
 
+
 module.exports = mongoose.model("Booking", bookingSchema);
- 
