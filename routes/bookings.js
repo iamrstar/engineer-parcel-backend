@@ -8,13 +8,13 @@ const { calculatePrice } = require("../utils/helpers");
 const { sendBookingConfirmation } = require("../services/emailTemplates");
 
 const router = express.Router();
- 
+
 // ✅ POST: Create Booking
 router.post("/", async (req, res) => {
   console.log("Received booking payload:", req.body);
 
   try {
-    const {
+    const {  
       senderDetails,
       receiverDetails,
       serviceType,
@@ -23,7 +23,7 @@ router.post("/", async (req, res) => {
       pickupSlot,
       notes,
       paymentMethod
-    } = req.body; 
+    } = req.body;
 
     // Validate pincodes
     const pickupPincode = await Pincode.findOne({ pincode: senderDetails.pincode, isServiceable: true });
@@ -36,17 +36,17 @@ router.post("/", async (req, res) => {
 
     // Calculate pricing
     // Calculate pricing
-const pricing = calculatePrice({
-  serviceType,
-  distance,
-  weight: packageDetails.weight || 1,
-  weightUnit: packageDetails.weightUnit || "kg", // <-- Gram / kg handled
-  length: packageDetails.dimensions?.length || 0,
-  width: packageDetails.dimensions?.width || 0,
-  height: packageDetails.dimensions?.height || 0,
-  fragile: packageDetails.fragile || false,
-  value: packageDetails.value || 0,
-});
+    const pricing = calculatePrice({
+      serviceType,
+      distance,
+      weight: packageDetails.weight || 1,
+      weightUnit: packageDetails.weightUnit || "kg", // <-- Gram / kg handled
+      length: packageDetails.dimensions?.length || 0,
+      width: packageDetails.dimensions?.width || 0,
+      height: packageDetails.dimensions?.height || 0,
+      fragile: packageDetails.fragile || false,
+      value: packageDetails.value || 0,
+    });
 
 
     // Create booking
@@ -121,7 +121,7 @@ router.post("/confirm-booking", async (req, res) => {
     const booking = new Booking({
       ...bookingData,
       paymentMethod: "Online",
-      paymentStatus: "Paid",
+      paymentStatus: "paid",
       trackingHistory: [
         { status: "pending", location: bookingData.senderDetails.address, description: "Booking created after successful payment" }
       ]
