@@ -76,7 +76,7 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
   `;
 
   await sendEmail({
-    to: "engineersparcel@gmail.com",
+    to: "rajchatterji20@gmail.com",
     subject: `📢 New Booking Received - ${booking.bookingId}`,
     html: adminHtml,
     text: `New booking received: ${booking.bookingId}`,
@@ -134,8 +134,113 @@ const sendInvoiceEmail = async (recipient, invoiceFilePath) => {
   });
 };
 
+/**
+ * Send a Status Update Email
+ */
+const sendStatusUpdate = async (booking, update) => {
+  const { status, location, description } = update;
+  const recipient = {
+    name: booking.receiverDetails?.name || booking.senderDetails?.name || "Customer",
+    email: booking.receiverDetails?.email || booking.senderDetails?.email
+  };
+
+  if (!recipient.email) return;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#f9fafb; padding:20px; border-radius:10px;">
+      <h2 style="color:#eb5a0c; text-align:center;">🚚 Shipment Update</h2>
+      <p>Hi <strong>${recipient.name}</strong>,</p>
+      <p>Your parcel <strong style="color:#eb5a0c;">#${booking.bookingId}</strong> has a new status update.</p>
+      
+      <div style="background:#fff; padding:15px; border-radius:8px; border-left: 5px solid #eb5a0c; box-shadow:0 0 5px rgba(0,0,0,0.1); margin:20px 0;">
+        <h3 style="margin-top:0; color:#eb5a0c;">${status}</h3>
+        <p style="margin:5px 0;"><strong>Location:</strong> ${location || "In Transit"}</p>
+        <p style="margin:5px 0;"><strong>Details:</strong> ${description || "Package is moving towards destination."}</p>
+      </div>
+
+      <p style="margin-top:20px; text-align:center;">
+        <a href="https://www.engineersparcel.in/track-order?id=${booking.bookingId}" style="display:inline-block; padding:12px 25px; background-color:#eb5a0c; color:white; text-decoration:none; border-radius:8px; font-weight:bold; box-shadow:0 4px 6px rgba(235, 90, 12, 0.2);">Track Live Updates</a>
+      </p>
+
+      <p style="margin-top:20px; font-size:12px; color:#666; text-align:center;">
+        Thank you for choosing <strong>EngineersParcel</strong>!
+      </p>
+    </div>
+  `;
+
+  await sendEmail({
+    to: recipient.email,
+    subject: `Update on your parcel #${booking.bookingId}: ${status}`,
+    html,
+  });
+};
+
+/**
+ * Send OTP for Registration
+ */
+const sendOTP = async (email, otp) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#f9fafb; padding:20px; border-radius:10px;">
+      <h2 style="color:#eb5a0c; text-align:center;">🔐 Registration OTP</h2>
+      <p>Hello,</p>
+      <p>Thank you for choosing <strong>EngineersParcel</strong>. Your 6-digit OTP for registration is:</p>
+      
+      <div style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1); margin:20px 0; text-align:center;">
+        <h1 style="margin:0; color:#eb5a0c; letter-spacing: 5px; font-size: 32px;">${otp}</h1>
+      </div>
+
+      <p style="font-size:14px; color:#555;">This OTP is valid for 10 minutes. Please do not share this code with anyone.</p>
+      
+      <hr style="margin-top:20px; border: 0; border-top: 1px solid #eee;">
+      <p style="font-size:12px; color:#666; text-align:center;">
+        Thank you for choosing <strong>EngineersParcel</strong>!
+      </p>
+    </div>
+  `;
+
+  await sendEmail({
+    to: email,
+    subject: `Your Registration OTP - EngineersParcel`,
+    html,
+  });
+};
+
+/**
+ * Send Password Reset OTP
+ */
+const sendPasswordResetOTP = async (email, otp) => {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#f9fafb; padding:20px; border-radius:10px;">
+      <h2 style="color:#eb5a0c; text-align:center;">🔑 Password Reset OTP</h2>
+      <p>Hello,</p>
+      <p>You are receiving this email because a password reset request was made for your account.</p>
+      <p>Your 6-digit OTP for password reset is:</p>
+      
+      <div style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1); margin:20px 0; text-align:center;">
+        <h1 style="margin:0; color:#eb5a0c; letter-spacing: 5px; font-size: 32px;">${otp}</h1>
+      </div>
+      
+      <p style="font-size:14px; color:#555;">This OTP is valid for 10 minutes. If you did not request this, please ignore this email.</p>
+      
+      <hr style="margin-top:20px; border: 0; border-top: 1px solid #eee;">
+      <p style="font-size:12px; color:#666; text-align:center;">
+        Thank you for choosing <strong>EngineersParcel</strong>!
+      </p>
+    </div>
+  `;
+
+  await sendEmail({
+    to: email,
+    subject: `Password Reset OTP - EngineersParcel`,
+    html,
+  });
+};
+
 module.exports = {
   sendBookingConfirmation,
   sendShipmentUpdate,
   sendInvoiceEmail,
+  sendStatusUpdate,
+  sendOTP,
+  sendPasswordResetOTP,
 };
