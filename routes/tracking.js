@@ -107,6 +107,8 @@ router.get("/status/:bookingId", async (req, res) => {
 });
 
 
+const { sendStatusUpdate } = require("../services/emailTemplates");
+
 /**
  * ===============================
  * POST update tracking info (Admin)
@@ -124,6 +126,9 @@ router.post("/update", async (req, res) => {
     booking.status = status;
     booking.trackingHistory.push({ status, location, description, timestamp: new Date() });
     await booking.save();
+
+    // Send notification (async)
+    sendStatusUpdate(booking, { status, location, description });
 
     res.json({
       success: true,
