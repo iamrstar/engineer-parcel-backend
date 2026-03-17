@@ -1,5 +1,7 @@
 const { sendEmail } = require("./emailService");
 
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://www.engineersparcel.in";
+
 /**
  * Send Booking Confirmation Email
  * — to sender, receiver, and admin
@@ -10,9 +12,9 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
       <h2 style="color:#ff6600; text-align:center;">📦 Booking Confirmed!</h2>
       <p>Hi <strong>${recipient.name}</strong>,</p>
 <p>
-  Your booking <strong style = "color:#ff6600;">${booking.bookingId}</strong> has been  confirmed — 
-  <a style = "color:#ff6600;" href="https://www.engineersparcel.in/track-order">
-    to track and get live updates
+  Your booking <strong style = "color:#ff6600;">${booking.bookingId}</strong> has been confirmed — 
+  <a style = "color:#ff6600; font-weight: bold;" href="${FRONTEND_URL}/track-order?id=${booking.bookingId}">
+    Click here to track your parcel live
   </a>
 </p>
 
@@ -32,9 +34,9 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
         
         <p style="margin-top:10px;">
   Track your order anytime: 
-  <a style = "color:#ff6600;" href="https://www.engineersparcel.in/track-order">
-    https://www.engineersparcel.in/track-order
-  </a> —  get live updates
+  <a style = "color:#ff6600; font-weight: bold;" href="${FRONTEND_URL}/track-order?id=${booking.bookingId}">
+    ${FRONTEND_URL}/track-order?id=${booking.bookingId}
+  </a>
 </p>
 
       <p style="margin-top:20px;">Thank you for choosing <strong>EngineersParcel</strong>! 🚚</p>
@@ -94,9 +96,12 @@ const sendShipmentUpdate = async (recipient, trackingInfo) => {
       <p>Hi <strong>${recipient.name}</strong>,</p>
       <p>Your parcel <strong>${trackingInfo.trackingId}</strong> is currently <strong>${trackingInfo.status}</strong>.</p>
       <p>Estimated Delivery: ${trackingInfo.estimatedDelivery}</p>
+      
+      <p style="margin-top:20px; text-align:center;">
+        <a href="${FRONTEND_URL}/track-order?id=${trackingInfo.trackingId}" style="display:inline-block; padding:12px 25px; background-color:#eb5a0c; color:white; text-decoration:none; border-radius:8px; font-weight:bold; box-shadow:0 4px 6px rgba(235, 90, 12, 0.2);">Track Live Status</a>
+      </p>
 
-      <p style="margin-top:15px;">Track your parcel anytime on our website using your Tracking ID.</p>
-      <p>Thank you for shipping with <strong>EngineersParcel</strong>!</p>
+      <p style="margin-top:15px; font-size:12px; color:#666;">Thank you for shipping with <strong>EngineersParcel</strong>!</p>
     </div>
   `;
 
@@ -159,7 +164,7 @@ const sendStatusUpdate = async (booking, update) => {
       </div>
 
       <p style="margin-top:20px; text-align:center;">
-        <a href="https://www.engineersparcel.in/track-order?id=${booking.bookingId}" style="display:inline-block; padding:12px 25px; background-color:#eb5a0c; color:white; text-decoration:none; border-radius:8px; font-weight:bold; box-shadow:0 4px 6px rgba(235, 90, 12, 0.2);">Track Live Updates</a>
+        <a href="${FRONTEND_URL}/track-order?id=${booking.bookingId}" style="display:inline-block; padding:12px 25px; background-color:#eb5a0c; color:white; text-decoration:none; border-radius:8px; font-weight:bold; box-shadow:0 4px 6px rgba(235, 90, 12, 0.2);">Track Live Updates</a>
       </p>
 
       <p style="margin-top:20px; font-size:12px; color:#666; text-align:center;">
