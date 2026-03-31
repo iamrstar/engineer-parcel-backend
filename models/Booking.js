@@ -52,6 +52,13 @@ const bookingSchema = new mongoose.Schema(
     deliveryPincode: String,
     pickupDate: Date,
     pickupSlot: String,
+    boxDeliveryType: {
+      type: String,
+      enum: ["self", "delivered"],
+      default: "self",
+    },
+    boxDeliveryDate: Date,
+    boxDeliverySlot: String,
     deliveryDate: Date,
     status: {
       type: String,
