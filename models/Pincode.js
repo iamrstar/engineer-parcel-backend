@@ -34,7 +34,7 @@ const pincodeSchema = new mongoose.Schema(
     serviceTypes: [
       {
         type: String,
-        enum: ["courier", "shifting", "local", "international"],
+        enum: ["courier", "surface", "shifting", "local", "international"],
       },
     ],
     additionalCharges: {
@@ -42,6 +42,10 @@ const pincodeSchema = new mongoose.Schema(
       default: 0,
     },
     restrictions: [String],
+    edl: {
+      type: Number,
+      default: 0,
+    },
     lastUpdated: {
       type: Date,
       default: Date.now,
