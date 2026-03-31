@@ -44,6 +44,7 @@ router.get("/check/:pincode", async (req, res) => {
         serviceTypes: pincodeData.serviceTypes,
         additionalCharges: pincodeData.additionalCharges,
         restrictions: pincodeData.restrictions,
+        edl: pincodeData.edl || 0,
       },
     })
   } catch (error) {
