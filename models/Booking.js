@@ -47,9 +47,18 @@ const bookingSchema = new mongoose.Schema(
       description: String,
       value: Number,
       fragile: Boolean,
+      isEdl: { type: Boolean, default: false },
+      edlItems: [mongoose.Schema.Types.Mixed],
+      edlContents: [String],
+      otherContentText: String,
     },
     pickupPincode: String,
     deliveryPincode: String,
+    pickupMethod: {
+      type: String,
+      enum: ["hub", "doorstep"],
+      default: "hub",
+    },
     pickupDate: Date,
     pickupSlot: String,
     boxDeliveryType: {
