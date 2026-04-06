@@ -1,4 +1,5 @@
 const { sendEmail } = require("./emailService");
+const pdfService = require("./pdfService");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://www.engineersparcel.in";
 
@@ -6,7 +7,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://www.engineersparcel.in
  * Send Booking Confirmation Email
  * — to sender, receiver, and admin
  */
-const sendBookingConfirmation = async (booking, recipient, attachments = []) => {
+const sendBookingConfirmation = async (booking, recipient, customAttachments = []) => {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#f9fafb; padding:20px; border-radius:10px;">
       <h2 style="color:#ff6600; text-align:center;">📦 Booking Confirmed!</h2>
@@ -22,7 +23,7 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
         <p><strong>Tracking ID:</strong> ${booking.bookingId}</p>
         <p><strong>Service Type:</strong> ${booking.serviceType}</p>
         <p><strong>Pickup Date:</strong> ${new Date(booking.pickupDate).toLocaleDateString()}</p>
-        <p><strong>Total Amount:</strong> ₹${booking.pricing.totalAmount}</p>
+        <p><strong>Total Amount:</strong> ₹${Number(booking.pricing.totalAmount).toFixed(2)}</p>
         <p><strong>Payment Method:</strong> ${booking.paymentMethod}</p>
       </div>
 
@@ -45,13 +46,30 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
     </div>
   `;
 
+  // ✅ Generate PDFs
+  let generatedAttachments = [];
+  try {
+    const invoicePdf = await pdfService.generateReceiptPDF(booking);
+    const labelPdf = await pdfService.generateLabelPDF(booking);
+    const declarationPdf = await pdfService.generateDeclarationPDF(booking);
+    generatedAttachments = [
+      { filename: `Receipt_${booking.bookingId}.pdf`, content: invoicePdf },
+      { filename: `Shipping_Label_${booking.bookingId}.pdf`, content: labelPdf },
+      { filename: `Self_Declaration_${booking.bookingId}.pdf`, content: declarationPdf },
+    ];
+  } catch (err) {
+    console.error("Failed to generate PDFs for email:", err);
+  }
+
+  const finalAttachments = [...customAttachments, ...generatedAttachments];
+
   // ✅ 1. Send to Main Recipient (sender or receiver)
   await sendEmail({
     to: recipient.email,
     subject: `Booking Confirmation - ${booking.bookingId}`,
     html,
     text: `Your booking ${booking.bookingId} has been confirmed.`,
-    attachments,
+    attachments: finalAttachments,
   });
 
   // ✅ 2. Send to Admin
@@ -67,7 +85,7 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
         <p><strong>Service Type:</strong> ${booking.serviceType}</p>
         <p><strong>Pickup:</strong> ${booking.senderDetails.city} (${booking.senderDetails.pincode})</p>
         <p><strong>Drop:</strong> ${booking.receiverDetails.city} (${booking.receiverDetails.pincode})</p>
-        <p><strong>Total Amount:</strong> ₹${booking.pricing.totalAmount}</p>
+        <p><strong>Total Amount:</strong> ₹${Number(booking.pricing.totalAmount).toFixed(2)}</p>
         <p><strong>Payment Method:</strong> ${booking.paymentMethod}</p>
       </div>
 
@@ -78,10 +96,11 @@ const sendBookingConfirmation = async (booking, recipient, attachments = []) => 
   `;
 
   await sendEmail({
-    to: "rajchatterji20@gmail.com",
+    to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
     subject: `📢 New Booking Received - ${booking.bookingId}`,
     html: adminHtml,
     text: `New booking received: ${booking.bookingId}`,
+    attachments: finalAttachments,
   });
 };
 
