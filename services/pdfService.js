@@ -163,7 +163,9 @@ async function generateReceiptPDF(booking) {
         const itH = 18;
         const itY = globalY - itH;
         page.drawRectangle({ x: startX, y: itY, width: tableWidth, height: itH, color: headerBg });
-        const cols = [{ l: 'Sno.', w: 30 }, { l: 'Description of Goods', w: 180 }, { l: 'Qty', w: 40 }, { l: 'Weight', w: 80 }, { l: 'Dimensions', w: tableWidth - 330 }];
+        const cols = [{ l: 'Sno.', w: 30 }, { l: 'Description of Goods', w: isEdl ? 180 : 260 }, { l: 'Qty', w: 40 }];
+        if (isEdl) cols.push({ l: 'Weight', w: 80 });
+        cols.push({ l: 'Dimensions', w: tableWidth - 330 });
         let cx = startX;
         cols.forEach((c, i) => {
             drawCell(c.l, cx, globalY, c.w, itH, fonts.bold, 8, 'center');
@@ -176,22 +178,29 @@ async function generateReceiptPDF(booking) {
         // --- 7. Item Content (Dynamic) ---
         const startItemY = globalY - 12;
         const descText = [booking.packageDetails?.description, booking.notes].filter(Boolean).join(' | ') || 'Shipment Content';
-        const lastDescY = wrapText(descText, startX + 35, startItemY, 170, fonts.regular, 7.5);
+        const lastDescY = wrapText(descText, startX + 35, startItemY, isEdl ? 170 : 250, fonts.regular, 7.5);
 
         const rowBot = Math.min(lastDescY, startItemY - 20) - 8;
         const r7H = globalY - rowBot;
 
-        drawCell('1', startX, globalY, 30, r7H, fonts.regular, 8, 'center');
-        drawCell(String(booking.packageDetails?.boxQuantity || 1), startX + 210, globalY, 40, r7H, fonts.regular, 8, 'center');
-        drawCell(`${booking.packageDetails?.weight || 0}${booking.packageDetails?.weightUnit || 'kg'}`, startX + 250, globalY, 80, r7H, fonts.bold, 8, 'center');
-
-        const dims = booking.packageDetails?.dimensions || [];
-        let ds = 'N/A';
-        if (dims && Object.keys(dims).length > 0) {
-            ds = `${dims.length || 0}x${dims.width || 0}x${dims.height || 0}`;
-            if (ds.length > 30) ds = ds.substring(0, 27) + '...';
+        let cx2 = startX;
+        drawCell('1', cx2, globalY, cols[0].w, r7H, fonts.regular, 8, 'center');
+        cx2 += cols[0].w + cols[1].w;
+        drawCell(String(booking.packageDetails?.boxQuantity || 1), cx2, globalY, cols[2].w, r7H, fonts.regular, 8, 'center');
+        cx2 += cols[2].w;
+        if (isEdl) {
+            drawCell(`${booking.packageDetails?.weight || 0}${booking.packageDetails?.weightUnit || 'kg'}`, cx2, globalY, 80, r7H, fonts.bold, 8, 'center');
         }
-        drawCell(ds, startX + 330, globalY, tableWidth - 330, r7H, fonts.regular, 7.5, 'center');
+
+        let ds = 'N/A';
+        if (isEdl && booking.packageDetails?.edlItems) {
+            ds = booking.packageDetails.edlItems.map(item => item.dims).join(', ');
+        } else {
+            const dims = booking.packageDetails?.dimensions || {};
+            if (dims.length) ds = `${dims.length}x${dims.width}x${dims.height}`;
+        }
+        if (ds.length > 30) ds = ds.substring(0, 27) + '...';
+        drawCell(ds, isEdl ? cx2 + 80 : cx2, globalY, tableWidth - 330, r7H, fonts.regular, 7.5, 'center');
 
         cx = startX;
         cols.forEach(c => { cx += c.w; if (cx < endX) drawVLine(cx, globalY, rowBot); });
@@ -410,10 +419,23 @@ async function generateLabelPDF(booking) {
         globalY -= 15;
 
         // Package Box Details
-        drawText(`Weight: ${booking.packageDetails?.weight || ''} ${booking.packageDetails?.weightUnit || 'kg'}`, margin, globalY, 10, fonts.bold);
+        const isEdl = booking.edl > 0 || booking.packageDetails?.isEdl || (booking.packageDetails?.description && booking.packageDetails.description.toUpperCase().includes('EDL'));
+        if (isEdl) {
+            drawText(`Weight: ${booking.packageDetails?.weight || ''} ${booking.packageDetails?.weightUnit || 'kg'}`, margin, globalY, 10, fonts.bold);
+        } else {
+            drawText(`Package: ${booking.packageDetails?.description || 'Standard Box'}`, margin, globalY, 10, fonts.bold);
+        }
         globalY -= 12;
-        const dims = booking.packageDetails?.dimensions || {};
-        drawText(`Dimensions: ${dims.length || 0}x${dims.width || 0}x${dims.height || 0} cm`, margin, globalY, 9, fonts.regular);
+        let ds = 'N/A';
+        if (isEdl && booking.packageDetails?.edlItems) {
+            ds = booking.packageDetails.edlItems.map(item => item.dims).join(', ') + ' cm';
+            drawText(`Dimensions: ${ds}`, margin, globalY, 9, fonts.regular);
+        } else {
+            const dims = booking.packageDetails?.dimensions || {};
+            if (dims.length) {
+                drawText(`Dimensions: ${dims.length}x${dims.width}x${dims.height} cm`, margin, globalY, 9, fonts.regular);
+            }
+        }
 
         // Subtext
         globalY = margin + 10;
