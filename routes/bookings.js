@@ -6,6 +6,7 @@ const { calculatePrice } = require("../utils/helpers");
 
 // ✅ Import email sender
 const { sendBookingConfirmation } = require("../services/emailTemplates");
+const { getWhatsAppNotificationLinks, sendBookingConfirmationWhatsApp } = require("../services/whatsappService");
 
 const router = express.Router();
 
@@ -73,12 +74,16 @@ router.post("/", async (req, res) => {
       const sender = { name: booking.senderDetails.name, email: booking.senderDetails.email };
       const receiver = { name: booking.receiverDetails.name, email: booking.receiverDetails.email };
       sendBookingConfirmation(booking, sender).catch(console.error);
-      sendBookingConfirmation(booking, receiver).catch(console.error);
+      // Receiver email explicitly skipped to prevent duplicate dispatch logs per client request
     } catch (err) {
       console.error("Error sending booking confirmation emails:", err);
     }
 
-    res.status(201).json({ success: true, message: "Booking created successfully", data: booking });
+    // ✅ Generate WhatsApp notification links + auto-send
+    const whatsappLinks = getWhatsAppNotificationLinks(booking, "confirmed");
+    sendBookingConfirmationWhatsApp(booking).catch(console.error);
+
+    res.status(201).json({ success: true, message: "Booking created successfully", data: booking, whatsappLinks });
 
   } catch (err) {
     console.error("Booking validation error:", err);
@@ -134,12 +139,16 @@ router.post("/confirm-booking", async (req, res) => {
       const sender = { name: booking.senderDetails.name, email: booking.senderDetails.email };
       const receiver = { name: booking.receiverDetails.name, email: booking.receiverDetails.email };
       sendBookingConfirmation(booking, sender).catch(console.error);
-      sendBookingConfirmation(booking, receiver).catch(console.error);
+      // Receiver email explicitly skipped to prevent duplicate dispatch logs per client request
     } catch (err) {
       console.error("Error sending booking confirmation emails:", err);
     }
 
-    res.status(201).json({ success: true, booking });
+    // ✅ Generate WhatsApp notification links + auto-send
+    const whatsappLinks = getWhatsAppNotificationLinks(booking, "confirmed");
+    sendBookingConfirmationWhatsApp(booking).catch(console.error);
+
+    res.status(201).json({ success: true, booking, whatsappLinks });
 
   } catch (err) {
     console.error("Error creating booking after payment:", err);
