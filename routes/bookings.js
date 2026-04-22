@@ -63,7 +63,11 @@ router.post("/", async (req, res) => {
       notes,
       paymentMethod,
       trackingHistory: [
-        { status: "pending", location: senderDetails.address, description: "Booking created successfully" },
+        { 
+          status: "pending", 
+          location: `${pickupPincode.city}, ${pickupPincode.state}`, 
+          description: "Booking created successfully" 
+        },
       ],
     });
 
@@ -128,7 +132,13 @@ router.post("/confirm-booking", async (req, res) => {
       paymentMethod: "Online",
       paymentStatus: "paid",
       trackingHistory: [
-        { status: "pending", location: bookingData.senderDetails.address, description: "Booking created after successful payment" }
+        { 
+          status: "pending", 
+          location: bookingData.senderDetails.city && bookingData.senderDetails.state 
+            ? `${bookingData.senderDetails.city}, ${bookingData.senderDetails.state}` 
+            : bookingData.senderDetails.address, 
+          description: "Booking created after successful payment" 
+        }
       ]
     });
 
