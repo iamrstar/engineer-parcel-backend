@@ -212,7 +212,7 @@ async function generateReceiptPDF(booking) {
         let cx2 = startX;
         drawCell('1', cx2, globalY, cols[0].w, r7H, fonts.regular, 8, 'center');
         cx2 += cols[0].w + cols[1].w;
-        drawCell(String(booking.packageDetails?.boxQuantity || 1), cx2, globalY, cols[2].w, r7H, fonts.regular, 8, 'center');
+        drawCell(String(booking.packageDetails?.totalItems || booking.packageDetails?.boxQuantity || 1), cx2, globalY, cols[2].w, r7H, fonts.regular, 8, 'center');
         cx2 += cols[2].w;
         if (isEdl) {
             drawCell(`${booking.packageDetails?.weight || 0}${booking.packageDetails?.weightUnit || 'kg'}`, cx2, globalY, 80, r7H, fonts.bold, 8, 'center');
