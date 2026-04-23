@@ -45,6 +45,8 @@ const bookingSchema = new mongoose.Schema(
         height: Number,
       },
       description: String,
+      totalItems: Number,
+      totalBoxes: Number,
       value: Number,
       fragile: Boolean,
       isEdl: { type: Boolean, default: false },
