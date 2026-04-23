@@ -64,25 +64,33 @@ const sendEmail = async ({ to, subject, text, html, attachments = [] }) => {
     attachments,
   };
 
-  try {
-    const startTime = Date.now();
-    console.log(`📨 Attempting to send email to: ${to} | Subject: ${subject}`);
-    
-    const info = await currentTransporter.sendMail(mailOptions);
-    
-    const duration = Date.now() - startTime;
-    console.log(`✅ Email sent successfully to ${to} in ${duration}ms | ID: ${info.messageId}`);
-    return info;
-  } catch (error) {
-    console.error(`❌ Email sending failed for ${to}:`, error.message);
-    // Log specific details if it's a known error
-    if (error.code === 'EENVELOPE') {
-      console.error("   Reason: Invalid recipient address.");
-    } else if (error.code === 'ETIMEDOUT') {
-      console.error("   Reason: Connection timed out.");
+  let lastError;
+  const maxRetries = 3;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const startTime = Date.now();
+      console.log(`📨 Attempt ${attempt}/${maxRetries}: Sending email to ${to} | ${subject}`);
+      
+      const info = await currentTransporter.sendMail(mailOptions);
+      
+      const duration = Date.now() - startTime;
+      console.log(`✅ Email sent successfully on attempt ${attempt} in ${duration}ms | ID: ${info.messageId}`);
+      return info;
+    } catch (error) {
+      lastError = error;
+      console.error(`⚠️ Attempt ${attempt} failed for ${to}:`, error.message);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: 2s, 4s
+        const delay = attempt * 2000;
+        console.log(`   Retrying in ${delay/1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-    throw error;
   }
+
+  throw lastError;
 };
 
 module.exports = { sendEmail };
