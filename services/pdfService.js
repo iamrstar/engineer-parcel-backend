@@ -3,6 +3,31 @@ const path = require("path");
 const fs = require("fs");
 const QRCode = require("qrcode");
 
+// ─── Simple In-Memory Cache for Assets ───
+const assetCache = {
+    logo: null,
+    signature: null,
+    failedAttempts: new Set()
+};
+
+const getAsset = (name, filePath) => {
+    if (assetCache[name]) return assetCache[name];
+    if (assetCache.failedAttempts.has(name)) return null;
+
+    try {
+        if (fs.existsSync(filePath)) {
+            const data = fs.readFileSync(filePath);
+            assetCache[name] = data;
+            console.log(`✅ Loaded asset into cache: ${name}`);
+            return data;
+        }
+    } catch (err) {
+        console.error(`❌ Failed to load asset ${name}:`, err.message);
+        assetCache.failedAttempts.add(name);
+    }
+    return null;
+};
+
 /**
  * Compact Single-Receipt PDF Generator for Engineers Parcel.
  * Optimized for top-alignment with restored Date/No and complete Destination.
@@ -80,8 +105,9 @@ async function generateReceiptPDF(booking) {
         const bY = globalY - bH;
         try {
             const lp = path.join(__dirname, '..', '..', 'frontend', 'public', 'logo.png');
-            if (fs.existsSync(lp)) {
-                const li = await pdfDoc.embedPng(fs.readFileSync(lp));
+            const logoData = getAsset('logo', lp);
+            if (logoData) {
+                const li = await pdfDoc.embedPng(logoData);
                 const ld = li.scaleToFit(110, 50);
                 page.drawImage(li, { x: startX + 10, y: bY + (bH / 2) - (ld.height / 2), width: ld.width, height: ld.height });
             }
@@ -241,8 +267,9 @@ async function generateReceiptPDF(booking) {
 
         try {
             const sp = path.join(__dirname, '..', '..', 'frontend', 'public', 'signature.png');
-            if (fs.existsSync(sp)) {
-                const si = await pdfDoc.embedPng(fs.readFileSync(sp));
+            const sigData = getAsset('signature', sp);
+            if (sigData) {
+                const si = await pdfDoc.embedPng(sigData);
                 const sd = si.scaleToFit(80, 30);
                 page.drawImage(si, { x: endX - 120, y: sY + 25, width: sd.width, height: sd.height });
             }
