@@ -5,7 +5,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://www.engineersparcel.in
 
 /**
  * Send Booking Confirmation Email
- * — to sender, receiver, and admin
+ * — to sender/customer and admin
  */
 const sendBookingConfirmation = async (booking, recipient, customAttachments = []) => {
   const html = `
@@ -22,8 +22,8 @@ const sendBookingConfirmation = async (booking, recipient, customAttachments = [
       <div style="background:#fff; padding:15px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.1);">
         <p><strong>Tracking ID:</strong> ${booking.bookingId}</p>
         <p><strong>Service Type:</strong> ${booking.serviceType}</p>
-        <p><strong>Pickup Date:</strong> ${new Date(booking.pickupDate).toLocaleDateString()}</p>
-        <p><strong>Total Amount:</strong> ₹${Number(booking.pricing.totalAmount).toFixed(2)}</p>
+        <p><strong>Pickup Date:</strong> ${booking.pickupDate ? new Date(booking.pickupDate).toLocaleDateString() : 'TBD'}</p>
+        <p><strong>Total Amount:</strong> ₹${Number(booking.pricing?.totalAmount || 0).toFixed(2)}</p>
         <p><strong>Payment Method:</strong> ${booking.paymentMethod}</p>
       </div>
 
@@ -49,58 +49,66 @@ const sendBookingConfirmation = async (booking, recipient, customAttachments = [
   // ✅ Generate PDFs
   let generatedAttachments = [];
   try {
-    const invoicePdf = await pdfService.generateReceiptPDF(booking);
-    const labelPdf = await pdfService.generateLabelPDF(booking);
-    const declarationPdf = await pdfService.generateDeclarationPDF(booking);
+    const [invoicePdf, labelPdf, declarationPdf] = await Promise.all([
+      pdfService.generateReceiptPDF(booking),
+      pdfService.generateLabelPDF(booking),
+      pdfService.generateDeclarationPDF(booking)
+    ]);
+
     generatedAttachments = [
       { filename: `Receipt_${booking.bookingId}.pdf`, content: invoicePdf },
       { filename: `Shipping_Label_${booking.bookingId}.pdf`, content: labelPdf },
       { filename: `Self_Declaration_${booking.bookingId}.pdf`, content: declarationPdf },
     ];
   } catch (err) {
-    console.error("Failed to generate PDFs for email:", err);
+    console.error(`❌ PDF Generation Failed for ${booking.bookingId}:`, err.message);
+    // Continue anyway; better to send email without PDFs than no email at all
   }
 
   const finalAttachments = [...customAttachments, ...generatedAttachments];
 
-  // ✅ 1. Send to Main Recipient (sender or receiver)
-  await sendEmail({
-    to: recipient.email,
-    subject: `Booking Confirmation - ${booking.bookingId}`,
-    html,
-    text: `Your booking ${booking.bookingId} has been confirmed.`,
-    attachments: finalAttachments,
-  });
+  // ✅ Send to Customer and Admin in parallel
+  console.log(`📡 Dispatching confirmation emails for booking ${booking.bookingId}...`);
+  
+  const emailTasks = [
+    // 1. To Customer
+    sendEmail({
+      to: recipient.email,
+      subject: `Booking Confirmation - ${booking.bookingId}`,
+      html,
+      text: `Your booking ${booking.bookingId} has been confirmed.`,
+      attachments: finalAttachments,
+    }),
+    // 2. To Admin
+    sendEmail({
+      to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
+      subject: `📢 New Booking Received - ${booking.bookingId}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#fff; padding:20px; border-radius:10px;">
+          <h2 style="color:#007bff;">📢 New Booking Alert!</h2>
+          <p>Hello <strong>Admin</strong>,</p>
+          <div style="background:#f9fafb; padding:15px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.05);">
+            <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
+            <p><strong>Customer Name:</strong> ${recipient.name} (${recipient.email})</p>
+            <p><strong>Service Type:</strong> ${booking.serviceType}</p>
+            <p><strong>Price:</strong> ₹${Number(booking.pricing?.totalAmount || 0).toFixed(2)}</p>
+          </div>
+          <p>Check the admin dashboard for details.</p>
+        </div>
+      `,
+      attachments: finalAttachments,
+    })
+  ];
 
-  // ✅ 2. Send to Admin
-  const adminHtml = `
-    <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#fff; padding:20px; border-radius:10px;">
-      <h2 style="color:#007bff;">📢 New Booking Alert!</h2>
-      <p>Hello <strong>Admin</strong>,</p>
-      <p>A new parcel booking has been placed successfully on <strong>EngineersParcel</strong>.</p>
-
-      <div style="background:#f9fafb; padding:15px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.05);">
-        <p><strong>Booking ID:</strong> ${booking.bookingId}</p>
-        <p><strong>Customer Name:</strong> ${recipient.name}</p>
-        <p><strong>Service Type:</strong> ${booking.serviceType}</p>
-        <p><strong>Pickup:</strong> ${booking.senderDetails.city} (${booking.senderDetails.pincode})</p>
-        <p><strong>Drop:</strong> ${booking.receiverDetails.city} (${booking.receiverDetails.pincode})</p>
-        <p><strong>Total Amount:</strong> ₹${Number(booking.pricing.totalAmount).toFixed(2)}</p>
-        <p><strong>Payment Method:</strong> ${booking.paymentMethod}</p>
-      </div>
-
-      <p style="margin-top:15px;">Please verify and process the order from your <strong>Admin Dashboard</strong>.</p>
-      <hr style="margin-top:20px;">
-      <p style="font-size:12px; color:#666;">Auto-generated booking alert for admin.</p>
-    </div>
-  `;
-
-  await sendEmail({
-    to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
-    subject: `📢 New Booking Received - ${booking.bookingId}`,
-    html: adminHtml,
-    text: `New booking received: ${booking.bookingId}`,
-    attachments: finalAttachments,
+  const results = await Promise.allSettled(emailTasks);
+  
+  results.forEach((result, index) => {
+    const type = index === 0 ? "Customer" : "Admin";
+    if (result.status === "rejected") {
+      console.error(`❌ ${type} email failed for ${booking.bookingId}:`, result.reason.message);
+    } else {
+      console.log(`✅ ${type} email dispatched successfully for ${booking.bookingId}`);
+    }
   });
 };
 
