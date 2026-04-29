@@ -1,168 +1,892 @@
 const express = require("express");
 const Booking = require("../models/Booking");
-const Pincode = require("../models/Pincode");
-const { protect, admin } = require("../middleware/auth");
-const { calculatePrice } = require("../utils/helpers");
+const authMiddleware = require("../middleware/auth");
+const adminAuth = require("../middleware/adminAuth");
+const Razorpay = require("razorpay");
+const { generateReceiptPDF, generateOfficeLabelPDF } = require("../utils/pdfReceipt");
+const sendEmail = require("../utils/sendEmail");
 
-// ✅ Import email sender
-const { sendBookingConfirmation } = require("../services/emailTemplates");
-const { getWhatsAppNotificationLinks, sendBookingConfirmationWhatsApp } = require("../services/whatsappService");
+// Initialize Razorpay
+let razorpay;
+if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+}
 
 const router = express.Router();
 
-// ✅ POST: Create Booking
-router.post("/", async (req, res) => {
-  console.log("Received booking payload:", req.body);
-
+/** ------------------------
+ * 📊 Dashboard & Test Routes
+ * ------------------------ */
+router.get("/stats/dashboard", authMiddleware, async (req, res) => {
   try {
-    const {  
-      senderDetails,
-      receiverDetails,
-      serviceType,
-      packageDetails,
-      pickupDate,
-      pickupSlot,
-      notes,
-      paymentMethod
-    } = req.body;
+    const totalBookings = await Booking.countDocuments();
+    const pendingBookings = await Booking.countDocuments({ status: "pending" });
+    const deliveredBookings = await Booking.countDocuments({ status: "delivered" });
+    const inTransitBookings = await Booking.countDocuments({ status: "in-transit" });
 
-    // Validate pincodes
-    const pickupPincode = await Pincode.findOne({ pincode: senderDetails.pincode, isServiceable: true });
-    const deliveryPincode = await Pincode.findOne({ pincode: receiverDetails.pincode, isServiceable: true });
+    const totalRevenue = await Booking.aggregate([
+      { $match: { paymentStatus: "paid" } },
+      { $group: { _id: null, total: { $sum: "$pricing.totalAmount" } } },
+    ]);
 
-    if (!pickupPincode) return res.status(400).json({ success: false, message: `Pickup location ${senderDetails.pincode} is not serviceable` });
-    if (!deliveryPincode) return res.status(400).json({ success: false, message: `Delivery location ${receiverDetails.pincode} is not serviceable` });
+    res.json({
+      totalBookings,
+      pendingBookings,
+      deliveredBookings,
+      inTransitBookings,
+      totalRevenue: totalRevenue[0]?.total || 0,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-    const distance = Math.abs(pickupPincode.deliveryDays - deliveryPincode.deliveryDays);
+router.get("/stats/pending-recent", authMiddleware, async (req, res) => {
+  try {
+    const recentPending = await Booking.find({ status: "pending" })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select("bookingId senderDetails receiverDetails serviceType pricing createdAt");
 
-    // Calculate pricing
-    // Calculate pricing
-    const pricing = calculatePrice({
-      serviceType,
-      distance,
-      weight: packageDetails.weight || 1,
-      weightUnit: packageDetails.weightUnit || "kg", // <-- Gram / kg handled
-      length: packageDetails.dimensions?.length || 0,
-      width: packageDetails.dimensions?.width || 0,
-      height: packageDetails.dimensions?.height || 0,
-      fragile: packageDetails.fragile || false,
-      value: packageDetails.value || 0,
+    res.json(recentPending);
+  } catch (error) {
+    console.error("Error fetching recent pending:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.get("/test-log", (req, res) => {
+  console.log("✅ /api/bookings/test-log route hit");
+  res.send("Test log working");
+});
+
+/** ------------------------
+ * 📦 Get all bookings
+ * ------------------------ */
+router.get("/", authMiddleware, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status, serviceType, search, startDate, endDate } = req.query;
+    const query = {};
+
+    if (status && status !== "all") {
+      query.status = status;
+    }
+
+    if (serviceType && serviceType !== "all") {
+      query.serviceType = serviceType;
+    }
+
+    if (req.query.vendorNotAssigned === "true") {
+      query.$or = [
+        { vendorName: { $exists: false } },
+        { vendorName: "" },
+        { vendorName: null }
+      ];
+    }
+
+    // Date Filtering
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
+    if (search) {
+      query.$or = [
+        { bookingId: { $regex: search, $options: "i" } },
+        { "senderDetails.name": { $regex: search, $options: "i" } },
+        { "receiverDetails.name": { $regex: search, $options: "i" } },
+        { "senderDetails.phone": { $regex: search, $options: "i" } },
+        { "receiverDetails.phone": { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const bookingsRaw = await Booking.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    // Look up EDL/KM for items that don't have it (older bookings)
+    const Pincode = require("../models/Pincode");
+    const bookings = await Promise.all(bookingsRaw.map(async (b) => {
+      let bookingObj = b.toObject();
+      if ((!bookingObj.edl || !bookingObj.km) && bookingObj.receiverDetails?.pincode) {
+        const pin = await Pincode.findOne({ pincode: bookingObj.receiverDetails.pincode });
+        if (pin) {
+          bookingObj.edl = pin.edl || 0;
+          bookingObj.km = pin.km || 0;
+        }
+      }
+      return bookingObj;
+    }));
+
+    const total = await Booking.countDocuments(query);
+
+    res.json({
+      bookings,
+      totalPages: Math.ceil(total / limit),
+      currentPage: Number(page),
+      total,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 🔔 Get E-Docket notification count
+ * ------------------------ */
+router.get("/edocket-count", adminAuth, async (req, res) => {
+  try {
+    // Count intake bookings that are not yet adminVerified
+    const mongoose = require("mongoose");
+    const IntakeBooking = mongoose.model("IntakeBooking");
+    const count = await IntakeBooking.countDocuments({ adminVerified: false });
+    res.json({ count });
+  } catch (error) {
+    console.error("Error fetching E-Docket count:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 📋 Get Tomorrow's Task Count
+ * ------------------------ */
+router.get("/tasks/tomorrow-count", authMiddleware, async (req, res) => {
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Format to start/end of day for accurate comparison
+    const startOfTomorrow = new Date(tomorrow);
+    startOfTomorrow.setHours(0, 0, 0, 0);
+    const endOfTomorrow = new Date(tomorrow);
+    endOfTomorrow.setHours(23, 59, 59, 999);
+
+    const count = await Booking.countDocuments({
+      pickupDate: {
+        $gte: startOfTomorrow,
+        $lte: endOfTomorrow
+      },
+      status: { $nin: ["delivered", "cancelled"] }
+    });
+    res.json({ count });
+  } catch (error) {
+    console.error("Error fetching tomorrow's task count:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 🚲 Get Recent Rider Activity
+ * ------------------------ */
+router.get("/stats/recent-rider-activity", authMiddleware, async (req, res) => {
+  try {
+    // Find bookings that have recent tracking updates from riders
+    // For simplicity, we'll get the 10 most recently updated bookings
+    const recentUpdates = await Booking.find({
+      assignedRider: { $ne: null },
+      "trackingHistory.0": { $exists: true }
+    })
+      .sort({ updatedAt: -1 })
+      .limit(10)
+      .populate("assignedRider", "name phone");
+
+    const activities = recentUpdates.map(booking => {
+      const lastUpdate = booking.trackingHistory[booking.trackingHistory.length - 1];
+      return {
+        _id: lastUpdate?._id || booking._id,
+        bookingId: booking.bookingId,
+        status: booking.status,
+        assignedRider: booking.assignedRider,
+        timestamp: lastUpdate?.timestamp || booking.updatedAt
+      };
     });
 
+    res.json(activities);
+  } catch (error) {
+    console.error("Error fetching recent rider activity:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
-    // Create booking
-    const booking = new Booking({
-      userId: req.user ? req.user.id : null,
-      serviceType,
-      senderDetails,
-      receiverDetails,
-      packageDetails,
-      pickupDate,
-      pickupSlot,
-      pricing,
-      notes,
-      paymentMethod,
-      trackingHistory: [
-        { 
-          status: "pending", 
-          location: `${pickupPincode.city}, ${pickupPincode.state}`, 
-          description: "Booking created successfully" 
+router.get("/:id", authMiddleware, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+    res.json(booking);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 📄 Download Receipt PDF
+ * ------------------------ */
+router.get("/:id/receipt", authMiddleware, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id).lean();
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    // On-the-fly Razorpay Link generation if missing but amount > 0
+    if (booking.pricing?.totalAmount > 0 && !booking.paymentLink && razorpay) {
+      try {
+        const paymentLink = await razorpay.paymentLink.create({
+          amount: booking.pricing.totalAmount * 100,
+          currency: "INR",
+          accept_partial: false,
+          description: `Payment for Shipment ${booking.bookingId}`,
+          customer: {
+            name: booking.senderDetails.name,
+            email: booking.senderDetails.email || "info@engineersparcel.com",
+            contact: /^(\d)\1{9}$/.test(booking.senderDetails.phone) ? "" : (booking.senderDetails.phone || "")
+          },
+          notify: { sms: false, email: false }, // Don't spam during download
+          notes: { bookingId: booking.bookingId }
+        });
+
+        if (paymentLink) {
+          await Booking.findByIdAndUpdate(booking._id, { $set: { paymentLink: paymentLink.short_url } }, { runValidators: false });
+        }
+      } catch (razorpayErr) {
+        console.error("Razorpay Link Error (Download):", razorpayErr);
+      }
+    }
+
+    // Generate PDF
+    const { receipt, label, declaration } = req.query;
+    const { generateCombinedPDF } = require("../utils/pdfReceipt");
+    const pdfBuffer = await generateCombinedPDF(booking, { receipt, label, declaration });
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename=Booking-${booking.bookingId || 'Shipment'}.pdf`,
+      "Content-Length": pdfBuffer.length,
+    });
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error("Receipt Download Error:", error);
+    res.status(500).json({ message: "Failed to generate receipt" });
+  }
+});
+
+/** ------------------------
+ * ✏️ Update booking (general fields)
+ * ------------------------ */
+router.put("/:id", authMiddleware, async (req, res) => {
+  try {
+    // Helper to flatten nested objects (like packageDetails) to prevent 
+    // Mongoose validation errors on missing required sub-document fields
+    const flattenObject = (ob) => {
+      const toReturn = {};
+      for (const i in ob) {
+        if (!ob.hasOwnProperty(i)) continue;
+        if (typeof ob[i] === 'object' && ob[i] !== null && ob[i].constructor === Object) {
+          const flatObject = flattenObject(ob[i]);
+          for (const x in flatObject) {
+            if (!flatObject.hasOwnProperty(x)) continue;
+            toReturn[i + '.' + x] = flatObject[x];
+          }
+        } else {
+          toReturn[i] = ob[i];
+        }
+      }
+      return toReturn;
+    };
+
+    const updateData = flattenObject(req.body);
+
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id, 
+      { $set: updateData }, 
+      { new: true, runValidators: true }
+    );
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    res.json(booking);
+  } catch (error) {
+    console.error(error);
+    if (error.name === "ValidationError") {
+      return res.status(400).json({ message: "Validation failed", errors: error.errors });
+    }
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 🗑️ Delete booking
+ * ------------------------ */
+router.delete("/:id", authMiddleware, async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndDelete(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    res.json({ success: true, message: "Booking deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting booking:", error);
+    res.status(500).json({ message: "Server error deleting booking" });
+  }
+});
+
+/** ------------------------
+ * 🚚 Add tracking update
+ * ------------------------ */
+// ✅ Use this endpoint for tracking history updates
+router.put("/:id/tracking", authMiddleware, async (req, res) => {
+  try {
+    const { status, location, description, timestamp } = req.body;
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const newEntry = {
+      status: status || "No Status",
+      location: location || "No Location",
+      description: description || "N/A",
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+    };
+
+    if (!Array.isArray(booking.trackingHistory)) {
+      booking.trackingHistory = [];
+    }
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: { status: status || booking.status, currentLocation: location || booking.currentLocation },
+        $push: { trackingHistory: newEntry }
+      },
+      { new: true, runValidators: false }
+    );
+
+    res.json(updated);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error updating tracking history" });
+  }
+});
+
+/** ------------------------
+ * ✏️ Edit specific tracking update
+ * ------------------------ */
+router.put("/:id/tracking/:trackingId", authMiddleware, async (req, res) => {
+  try {
+    const { status, location, description, timestamp } = req.body;
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: { 
+          status: (trackIndex === booking.trackingHistory.length - 1 && status) ? status : booking.status,
+          currentLocation: (trackIndex === booking.trackingHistory.length - 1 && location) ? location : booking.currentLocation,
+          trackingHistory: booking.trackingHistory // Replace full array as we edited an index
+        }
+      },
+      { new: true, runValidators: false }
+    );
+    res.json(updated);
+  } catch (error) {
+    console.error("Error editing tracking step:", error);
+    res.status(500).json({ message: "Error editing tracking step" });
+  }
+});
+
+/** ------------------------
+ * 🗑️ Delete specific tracking update
+ * ------------------------ */
+router.delete("/:id/tracking/:trackingId", authMiddleware, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    const trackIndex = booking.trackingHistory.findIndex(
+      (t) => t._id.toString() === req.params.trackingId
+    );
+
+    if (trackIndex === -1) {
+      return res.status(404).json({ message: "Tracking update not found" });
+    }
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: { 
+          status: booking.status,
+          trackingHistory: booking.trackingHistory 
+        }
+      },
+      { new: true, runValidators: false }
+    );
+    res.json(updated);
+  } catch (error) {
+    console.error("Error deleting tracking step:", error);
+    res.status(500).json({ message: "Error deleting tracking step" });
+  }
+});
+
+/** ------------------------
+ * 🚲 Assign Rider to Booking
+ * ------------------------ */
+router.put("/:id/assign", adminAuth, async (req, res) => {
+  try {
+    const { riderId, assignedFor } = req.body;
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const updateObj = {
+      $set: { 
+        assignedRider: riderId || null,
+        assignedFor: assignedFor || "pickup"
+      }
+    };
+
+    if (riderId) {
+      const User = require("../models/User");
+      const rider = await User.findById(riderId);
+      if (rider) {
+        // Check if there's already an assignment entry in the tracking history
+        const alreadyAssigned = booking.trackingHistory.some(entry => 
+          entry.description && entry.description.includes("assigned for")
+        );
+
+        if (!alreadyAssigned) {
+          updateObj.$push = {
+            trackingHistory: {
+              status: booking.status,
+              location: "Hub",
+              timestamp: new Date(),
+              description: `Rider ${rider.name} assigned for ${assignedFor || "pickup"}`
+            }
+          };
+        }
+      }
+    }
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      updateObj,
+      { new: true, runValidators: false }
+    );
+    res.json(updated);
+  } catch (error) {
+    console.error("Error assigning rider:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 🔄 Reschedule/Recover Booking
+ * ------------------------ */
+router.put("/:id/reschedule", adminAuth, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const trackingEntry = {
+      status: "pending",
+      location: booking.currentLocation || "Hub",
+      timestamp: new Date(),
+      description: "Booking rescheduled from cancelled state by admin."
+    };
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          status: "pending",
+          isRejected: false,
+          rejectionReason: ""
         },
-      ],
+        $push: { trackingHistory: trackingEntry }
+      },
+      { new: true, runValidators: false }
+    );
+
+    res.json(enrichedBooking(updated));
+  } catch (error) {
+    console.error("Error rescheduling booking:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/** ------------------------
+ * 🔄 Reschedule/Recover Booking
+ * ------------------------ */
+router.put("/:id/reschedule-campus", adminAuth, async (req, res) => {
+  try {
+    const { rescheduleType, newDate, newSlot, source } = req.body;
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const typeLabel = rescheduleType === "pickup" ? "Box Pickup" : "Box Delivery";
+    const sourceLabel = source === "admin" ? "Admin/Internal Reasons" : "Customer Request";
+    
+    const trackingUpdate = {
+      status: booking.status,
+      location: booking.currentLocation || "Hub",
+      timestamp: new Date(),
+      description: `${typeLabel} Rescheduled to ${new Date(newDate).toLocaleDateString()} (${newSlot}) due to ${sourceLabel}.`
+    };
+
+    // Use findByIdAndUpdate to avoid triggering full document validation (e.g. missing weight)
+    const updatePayload = {
+      $push: { trackingHistory: trackingUpdate }
+    };
+
+    if (rescheduleType === "pickup") {
+      updatePayload.pickupDate = new Date(newDate);
+      updatePayload.pickupSlot = newSlot;
+    } else {
+      updatePayload.boxDeliveryDate = new Date(newDate);
+      updatePayload.boxDeliverySlot = newSlot;
+    }
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      updatePayload,
+      { new: true, runValidators: false } // runValidators: false is key here to bypass structural validation errors on unrelated fields
+    );
+
+    // Trigger Email Notification
+    if (updated.senderDetails?.email) {
+      let emailHtml = "";
+      let subject = "";
+
+      if (source === "admin") {
+        subject = `Schedule Update for your Booking ${updated.bookingId}`;
+        emailHtml = `
+          <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #ea580c;">Important Schedule Update</h2>
+            <p>Dear ${updated.senderDetails.name},</p>
+            <p>Due to unforeseen circumstances, we are unable to complete your <strong>${typeLabel}</strong> as scheduled.</p>
+            <p>We have rescheduled it for:</p>
+            <div style="background-color: #fff7ed; padding: 15px; border-radius: 8px; border: 1px solid #ffedd5; margin: 20px 0;">
+              <p style="margin: 0;"><strong>Date:</strong> ${new Date(newDate).toLocaleDateString()}</p>
+              <p style="margin: 5px 0 0 0;"><strong>Time Slot:</strong> ${newSlot}</p>
+            </div>
+            <p>We sincerely apologize for any inconvenience caused.</p>
+            <p>Best regards,<br><strong>Engineers Parcel Team</strong></p>
+          </div>
+        `;
+      } else {
+        subject = `Rescheduled: ${updated.bookingId}`;
+        emailHtml = `
+          <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #ea580c;">Schedule Confirmed</h2>
+            <p>Dear ${updated.senderDetails.name},</p>
+            <p>As per your request, your Campus Parcel <strong>${typeLabel}</strong> has been successfully rescheduled.</p>
+            <div style="background-color: #f0fdf4; padding: 15px; border-radius: 8px; border: 1px solid #dcfce7; margin: 20px 0;">
+              <p style="margin: 0;"><strong>New Date:</strong> ${new Date(newDate).toLocaleDateString()}</p>
+              <p style="margin: 5px 0 0 0;"><strong>New Time Slot:</strong> ${newSlot}</p>
+            </div>
+            <p>Thank you for choosing Engineers Parcel.</p>
+            <p>Best regards,<br><strong>Engineers Parcel Team</strong></p>
+          </div>
+        `;
+      }
+
+      try {
+        await sendEmail({
+          to: updated.senderDetails.email,
+          subject,
+          html: emailHtml,
+          bookingId: updated.bookingId
+        });
+        console.log(`✅ Reschedule email sent for ${updated.bookingId}`);
+      } catch (emailErr) {
+        console.error("❌ Failed to send reschedule email:", emailErr);
+      }
+    }
+
+    res.json(enrichedBooking(updated));
+  } catch (error) {
+    console.error("Error rescheduling campus booking:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+/** ------------------------
+ * ❌ Cancel Booking
+ * ------------------------ */
+router.put("/:id/cancel", authMiddleware, async (req, res) => {
+  try {
+    const { reason, initiatedBy = "admin" } = req.body;
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const cancelReason = reason || "No reason provided";
+    const statusEntry = {
+      status: "cancelled",
+      location: booking.currentLocation || "Hub",
+      timestamp: new Date(),
+      description: `Booking cancelled by ${initiatedBy}. Reason: ${cancelReason}`
+    };
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { 
+        $set: { status: "cancelled" },
+        $push: { trackingHistory: statusEntry }
+      },
+      { new: true, runValidators: false }
+    );
+
+    // Send Cancellation Email
+    if (updated.senderDetails?.email) {
+      const subject = `Booking Cancelled: ${updated.bookingId}`;
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <h2 style="color: #dc2626;">Booking Cancellation Notification</h2>
+          <p>Dear ${updated.senderDetails.name},</p>
+          <p>Your booking with ID <strong>${updated.bookingId}</strong> has been cancelled.</p>
+          <div style="background-color: #fef2f2; padding: 15px; border-radius: 8px; border: 1px solid #fee2e2; margin: 20px 0;">
+            <p style="margin: 0;"><strong>Reason:</strong> ${cancelReason}</p>
+          </div>
+          <p style="font-weight: bold; color: #ef4444;">
+            If you have made any payment, it will be refunded to your original payment mode within 7 working days.
+          </p>
+          <p>We apologize for any inconvenience caused.</p>
+          <p>Best regards,<br><strong>Engineers Parcel Team</strong></p>
+        </div>
+      `;
+
+      try {
+        await sendEmail({
+          to: updated.senderDetails.email,
+          subject,
+          html: emailHtml,
+          bookingId: updated.bookingId
+        });
+        console.log(`✅ Cancellation email sent for ${updated.bookingId}`);
+      } catch (emailErr) {
+        console.error("❌ Failed to send cancellation email:", emailErr);
+      }
+    }
+
+    res.json(updated);
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+/** ------------------------
+ * 📄 Office Label Download
+ * ------------------------ */
+router.get("/:id/office-label", authMiddleware, async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const pdfBuffer = await generateOfficeLabelPDF(booking);
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename=Office-Label-${booking.bookingId || 'Shipment'}.pdf`
     });
 
-    await booking.save();
-
-    // ✅ Send emails asynchronously
-    try {
-      const sender = { name: booking.senderDetails.name, email: booking.senderDetails.email };
-      const receiver = { name: booking.receiverDetails.name, email: booking.receiverDetails.email };
-      sendBookingConfirmation(booking, sender).catch(console.error);
-      // Receiver email explicitly skipped to prevent duplicate dispatch logs per client request
-    } catch (err) {
-      console.error("Error sending booking confirmation emails:", err);
-    }
-
-    // ✅ Generate WhatsApp notification links + auto-send
-    const whatsappLinks = getWhatsAppNotificationLinks(booking, "confirmed");
-    sendBookingConfirmationWhatsApp(booking).catch(console.error);
-
-    res.status(201).json({ success: true, message: "Booking created successfully", data: booking, whatsappLinks });
-
-  } catch (err) {
-    console.error("Booking validation error:", err);
-    if (err.name === "ValidationError") {
-      const messages = Object.values(err.errors).map(e => e.message);
-      return res.status(400).json({ success: false, message: messages.join(", ") });
-    }
-    res.status(500).json({ success: false, message: err.message || "unknown error" });
-  }
-});
-
-// GET booking by bookingId
-router.get("/:bookingId", async (req, res) => {
-  try {
-    const booking = await Booking.findOne({ bookingId: req.params.bookingId }).populate("userId", "name email phone");
-    if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
-    res.json({ success: true, data: booking });
+    res.send(pdfBuffer);
   } catch (error) {
-    console.error("Get booking error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Office Label Download Error:", error);
+    res.status(500).json({ message: "Failed to generate office label" });
   }
 });
 
-// GET all bookings (admin)
-router.get("/", protect, admin, async (req, res) => {
-  try {
-    const bookings = await Booking.find().sort({ createdAt: -1 });
-    res.json({ success: true, data: bookings });
-  } catch (error) {
-    console.error("Get all bookings error:", error);
-    res.status(500).json({ success: false, message: "Server error while fetching bookings" });
-  }
-});
+// Helper to return standardized booking response if needed
+const enrichedBooking = (b) => {
+  return b; // Adjust if you have a specific mapping
+};
 
-// Confirm booking after online payment
-router.post("/confirm-booking", async (req, res) => {
-  try {
-    const { bookingData } = req.body;
+/** ------------------------
+ * 🗓️ Tomorrow's Tasks (Pickups/Deliveries)
+ * ------------------------ */
 
-    const booking = new Booking({
-      ...bookingData,
-      paymentMethod: "Online",
-      paymentStatus: "paid",
-      trackingHistory: [
+// Get count of unique bookings for tomorrow
+router.get("/tasks/tomorrow-count", adminAuth, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Tomorrow start: today + 1 day
+    const tomorrowStart = new Date(today);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+    
+    // Day after tomorrow start: today + 2 days
+    const tomorrowEnd = new Date(today);
+    tomorrowEnd.setDate(tomorrowEnd.getDate() + 2);
+
+    console.log(`Fetching tasks between ${tomorrowStart.toISOString()} and ${tomorrowEnd.toISOString()}`);
+
+    const count = await Booking.countDocuments({
+      serviceType: "campus-parcel",
+      $or: [
         { 
-          status: "pending", 
-          location: bookingData.senderDetails.city && bookingData.senderDetails.state 
-            ? `${bookingData.senderDetails.city}, ${bookingData.senderDetails.state}` 
-            : bookingData.senderDetails.address, 
-          description: "Booking created after successful payment" 
+          pickupDate: { $gte: tomorrowStart, $lt: tomorrowEnd },
+          status: { $nin: ['picked', 'in-transit', 'out-for-delivery', 'delivered', 'cancelled'] }
+        },
+        { 
+          boxDeliveryDate: { $gte: tomorrowStart, $lt: tomorrowEnd },
+          isBoxDelivered: { $ne: true }
         }
       ]
     });
 
-    await booking.save();
+    res.json({ count: count || 0 });
+  } catch (error) {
+    console.error("Error in /tasks/tomorrow-count:", error);
+    res.status(500).json({ 
+      message: "Server error fetching task count",
+      error: error.message 
+    });
+  }
+});
 
-    // ✅ Send emails asynchronously
-    try {
-      const sender = { name: booking.senderDetails.name, email: booking.senderDetails.email };
-      const receiver = { name: booking.receiverDetails.name, email: booking.receiverDetails.email };
-      sendBookingConfirmation(booking, sender).catch(console.error);
-      // Receiver email explicitly skipped to prevent duplicate dispatch logs per client request
-    } catch (err) {
-      console.error("Error sending booking confirmation emails:", err);
+// Get detail of bookings for tasks (default tomorrow, or specific date / range)
+router.get("/tasks/tomorrow", adminAuth, async (req, res) => {
+  try {
+    const { date, range } = req.query;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let targetStart = new Date(today);
+    let targetEnd = new Date(today);
+
+    if (range === 'last7days') {
+      targetStart.setDate(targetStart.getDate() - 7);
+      targetEnd.setDate(targetEnd.getDate() + 1); // Up to the end of today
+    } else if (range === 'next7days') {
+      targetStart = new Date(today);
+      targetEnd = new Date(today);
+      targetEnd.setDate(targetEnd.getDate() + 7);
+    } else if (req.query.startDate && req.query.endDate) {
+      targetStart = new Date(req.query.startDate);
+      targetStart.setHours(0, 0, 0, 0);
+      targetEnd = new Date(req.query.endDate);
+      targetEnd.setHours(23, 59, 59, 999);
+    } else if (date) {
+      targetStart = new Date(date);
+      targetStart.setHours(0, 0, 0, 0);
+      targetEnd = new Date(targetStart);
+      targetEnd.setDate(targetEnd.getDate() + 1);
+    } else {
+      // Default to next 7 days as requested
+      targetStart = new Date(today);
+      targetEnd = new Date(today);
+      targetEnd.setDate(targetEnd.getDate() + 7);
     }
 
-    // ✅ Generate WhatsApp notification links + auto-send
-    const whatsappLinks = getWhatsAppNotificationLinks(booking, "confirmed");
-    sendBookingConfirmationWhatsApp(booking).catch(console.error);
+    const bookings = await Booking.find({
+      serviceType: "campus-parcel",
+      $or: [
+        { pickupDate: { $gte: targetStart, $lt: targetEnd } },
+        { boxDeliveryDate: { $gte: targetStart, $lt: targetEnd } }
+      ]
+    }).select('bookingId senderDetails receiverDetails pickupDate pickupSlot boxDeliveryDate boxDeliverySlot serviceType status isBoxDelivered assignedRider')
+      .populate('assignedRider', 'name phone');
 
-    res.status(201).json({ success: true, booking, whatsappLinks });
+    // Categorize
+    const boxPickups = bookings.filter(b => 
+      b.pickupDate && 
+      new Date(b.pickupDate) >= targetStart && 
+      new Date(b.pickupDate) < targetEnd
+    );
 
-  } catch (err) {
-    console.error("Error creating booking after payment:", err);
-    res.status(500).json({ success: false, message: "Failed to create booking" });
+    const boxDeliveries = bookings.filter(b => 
+      b.boxDeliveryDate && 
+      new Date(b.boxDeliveryDate) >= targetStart && 
+      new Date(b.boxDeliveryDate) < targetEnd
+    );
+
+    res.json({ 
+      boxPickups: boxPickups || [], 
+      boxDeliveries: boxDeliveries || [] 
+    });
+  } catch (error) {
+    console.error("Error in /tasks/tomorrow:", error);
+    res.status(500).json({ 
+      message: "Server error fetching tasks",
+      error: error.message
+    });
+  }
+});
+
+// Mark a task as completed
+router.put("/:id/tasks/complete", adminAuth, async (req, res) => {
+  try {
+    const { type } = req.body; // 'pickup' or 'delivery'
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    const trackEntry = {
+      status: (type === 'pickup' ? 'picked' : booking.status),
+      location: booking.currentLocation || "Hub",
+      timestamp: new Date(),
+      description: type === 'delivery' ? "Empty boxes / packaging material delivered to customer." : "Shipment successfully picked up from customer."
+    };
+
+    const updated = await Booking.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: { 
+          status: (type === 'pickup' ? 'picked' : booking.status),
+          isBoxDelivered: (type === 'delivery' ? true : booking.isBoxDelivered)
+        },
+        $push: { trackingHistory: trackEntry }
+      },
+      { new: true, runValidators: false }
+    );
+
+    res.json({ message: "Task marked as completed", booking: updated });
+  } catch (error) {
+    console.error("Error completing task:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
