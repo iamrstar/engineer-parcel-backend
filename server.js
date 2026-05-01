@@ -25,7 +25,8 @@ dotenv.config();
     "https://ep.engineersparcel.in", 
     "https://engineersparcel.vercel.app",
     "https://engineer-parcel-admin.netlify.app",
-    "https://engineer-parcel-admin.vercel.app"
+    "https://engineer-parcel-admin.vercel.app",
+    "https://pincode-admin-tool.vercel.app"
   ];
 
   app.use(cors({
@@ -43,7 +44,7 @@ dotenv.config();
   // ✅ Rate limiting
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 500, // Increased for campus spikes
     message: "Too many requests from this IP, please try again later.",
   });
   app.use("/api/", limiter);
