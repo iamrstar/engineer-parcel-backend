@@ -47,6 +47,8 @@ router.post("/", async (req, res) => {
       height: packageDetails.dimensions?.height || 0,
       fragile: packageDetails.fragile || false,
       value: packageDetails.value || 0,
+      isEdl: deliveryPincode.edl > 0,
+      edlDistance: deliveryPincode.edl,
     });
 
 
