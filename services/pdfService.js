@@ -203,7 +203,10 @@ async function generateReceiptPDF(booking) {
 
         // --- 7. Item Content (Dynamic) ---
         const startItemY = globalY - 12;
-        const descText = [booking.packageDetails?.description, booking.notes].filter(Boolean).join(' | ') || 'Shipment Content';
+        const descText = booking.serviceType === 'campus-parcel' 
+            ? (booking.packageDetails?.description || 'Campus Parcel Shipment')
+            : ([booking.packageDetails?.description, booking.notes].filter(Boolean).join(' | ') || 'Shipment Content');
+
         const lastDescY = wrapText(descText, startX + 35, startItemY, isEdl ? 170 : 250, fonts.regular, 7.5);
 
         const rowBot = Math.min(lastDescY, startItemY - 20) - 8;
@@ -343,13 +346,40 @@ async function generateReceiptPDF(booking) {
         throw error;
     }
 }
+/**
+ * Parses items string (e.g. "Alpha Box x2, Nova Box x1") into an array of individual items.
+ */
+function parseItems(itemsStr, totalCount) {
+    if (!itemsStr) return Array(totalCount || 1).fill("Standard Box");
+
+    const parts = itemsStr.split(',').map(p => p.trim());
+    const expanded = [];
+
+    parts.forEach(part => {
+        const match = part.match(/(.+) x(\d+)/i);
+        if (match) {
+            const name = match[1].trim();
+            const count = parseInt(match[2], 10);
+            for (let i = 0; i < count; i++) expanded.push(name);
+        } else {
+            expanded.push(part);
+        }
+    });
+
+    // If parsing produced fewer items than totalCount, fill the rest
+    if (totalCount && expanded.length < totalCount) {
+        const fallback = parts[0] ? parts[0].replace(/ x\d+/i, '').trim() : "Standard Box";
+        while (expanded.length < totalCount) {
+            expanded.push(fallback);
+        }
+    }
+
+    return expanded.length > 0 ? expanded : ["Standard Box"];
+}
 
 async function generateLabelPDF(booking) {
     try {
         const pdfDoc = await PDFDocument.create();
-        // A6 size for shipping label
-        const page = pdfDoc.addPage([297.64, 419.53]);
-        const { width, height } = page.getSize();
 
         const fonts = {
             regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
@@ -357,124 +387,168 @@ async function generateLabelPDF(booking) {
         };
 
         const black = rgb(0, 0, 0);
+        const red = rgb(1, 0, 0);
         const margin = 15;
-        let globalY = height - margin;
 
-        const drawText = (t, x, y, size, font) => {
-            page.drawText(String(t || ''), { x, y, size, font, color: black });
-        };
+        // Parse items into individual labels
+        const itemsStr = booking.packageDetails?.items || booking.packageDetails?.description || "";
+        const totalCount = booking.packageDetails?.totalItems || booking.packageDetails?.totalBoxes || booking.packageDetails?.boxQuantity || 1;
+        const expandedItems = parseItems(itemsStr, totalCount);
 
-        // Header
-        page.drawRectangle({ x: margin, y: globalY - 30, width: width - (margin * 2), height: 30, color: black });
-        page.drawText('ENGINEERS PARCEL', { x: margin + 10, y: globalY - 20, size: 14, font: fonts.bold, color: rgb(1, 1, 1) });
-        globalY -= 40;
+        for (let i = 0; i < expandedItems.length; i++) {
+            const boxName = expandedItems[i];
+            const boxSequence = `${i + 1} / ${expandedItems.length}`;
 
-        // QR / Tracking ID
-        const tid = booking.trackingId || booking.bookingId || 'EP-PENDING';
-        try {
-            const qrCodeDataUrl = await QRCode.toDataURL(tid, { margin: 1, width: 80 });
-            const qrImageBytes = Buffer.from(qrCodeDataUrl.split(',')[1], 'base64');
-            const qrImage = await pdfDoc.embedPng(qrImageBytes);
-            page.drawImage(qrImage, { x: width - margin - 80, y: globalY - 50, width: 80, height: 80 });
-        } catch (e) {}
+            // A6 size for shipping label
+            const page = pdfDoc.addPage([297.64, 419.53]);
+            const { width, height } = page.getSize();
+            let globalY = height - margin;
 
-        drawText('TRACKING ID:', margin, globalY, 10, fonts.bold);
-        drawText(tid, margin, globalY - 15, 14, fonts.bold);
-        drawText(`Service: ${(booking.serviceType || 'STD').toUpperCase()}`, margin, globalY - 30, 10, fonts.bold);
-        globalY -= 70;
+            const drawText = (t, x, y, size, font) => {
+                page.drawText(String(t || ''), { x, y, size, font, color: black });
+            };
 
-        page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
-        globalY -= 15;
+            // Header
+            page.drawRectangle({ x: margin, y: globalY - 30, width: width - (margin * 2), height: 30, color: black });
+            page.drawText('ENGINEERS PARCEL', { x: margin + 10, y: globalY - 20, size: 14, font: fonts.bold, color: rgb(1, 1, 1) });
+            globalY -= 40;
 
-        // Receiver (TO)
-        drawText('TO (RECEIVER):', margin, globalY, 12, fonts.bold);
-        globalY -= 15;
-        drawText(booking.receiverDetails?.name || 'N/A', margin, globalY, 10, fonts.bold);
-        globalY -= 12;
-        const rAddr = booking.receiverDetails?.address || '';
-        const rWords = rAddr.split(' ');
-        let rLine = '';
-        for (const w of rWords) {
-            if (fonts.regular.widthOfTextAtSize(rLine + w + ' ', 9) > (width - margin * 2)) {
-                drawText(rLine, margin, globalY, 9, fonts.regular);
-                rLine = w + ' ';
-                globalY -= 10;
+            // QR / Tracking ID
+            const tid = booking.trackingId || booking.bookingId || 'EP-PENDING';
+            const qrContent = [
+                `ID: ${tid}`,
+                `FROM: ${booking.senderDetails?.name || 'N/A'}, ${booking.senderDetails?.phone || ''}, ${booking.senderDetails?.city || ''}`,
+                `TO: ${booking.receiverDetails?.name || 'N/A'}, ${booking.receiverDetails?.phone || ''}, ${booking.receiverDetails?.city || ''}`
+            ].join('\n');
+
+            try {
+                const qrCodeDataUrl = await QRCode.toDataURL(qrContent, { margin: 1, width: 80 });
+                const qrImageBytes = Buffer.from(qrCodeDataUrl.split(',')[1], 'base64');
+                const qrImage = await pdfDoc.embedPng(qrImageBytes);
+                page.drawImage(qrImage, { x: width - margin - 80, y: globalY - 50, width: 80, height: 80 });
+            } catch (e) { }
+
+
+            drawText('TRACKING ID:', margin, globalY, 10, fonts.bold);
+            drawText(tid, margin, globalY - 15, 14, fonts.bold);
+            drawText(`Service: ${(booking.serviceType || 'STD').toUpperCase()}`, margin, globalY - 30, 10, fonts.bold);
+
+            // --- TOP RED BOX (Sequence) ---
+            if (expandedItems.length > 1) {
+                const rectW = 110;
+                const rectH = 45;
+                const rectX = margin + 5;
+                const rectY = globalY - 80;
+                page.drawRectangle({ x: rectX, y: rectY, width: rectW, height: rectH, borderColor: red, borderWidth: 2 });
+                const seqW = fonts.bold.widthOfTextAtSize(boxSequence, 20);
+                page.drawText(boxSequence, { x: rectX + (rectW / 2) - (seqW / 2), y: rectY + 15, size: 20, font: fonts.bold, color: black });
+            }
+
+            globalY -= 85;
+
+            page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
+            globalY -= 15;
+
+            // Receiver (TO)
+            drawText('TO (RECEIVER):', margin, globalY, 12, fonts.bold);
+            globalY -= 15;
+            drawText(booking.receiverDetails?.name || 'N/A', margin, globalY, 10, fonts.bold);
+            globalY -= 12;
+            const rAddr = booking.receiverDetails?.address || '';
+            const rWords = rAddr.split(' ');
+            let rLine = '';
+            for (const w of rWords) {
+                if (fonts.regular.widthOfTextAtSize(rLine + w + ' ', 9) > (width - margin * 2)) {
+                    drawText(rLine, margin, globalY, 9, fonts.regular);
+                    rLine = w + ' ';
+                    globalY -= 10;
+                } else {
+                    rLine += w + ' ';
+                }
+            }
+            drawText(rLine, margin, globalY, 9, fonts.regular);
+            globalY -= 12;
+            drawText(`${booking.receiverDetails?.pincode || ''} - ${booking.receiverDetails?.city || ''}`, margin, globalY, 10, fonts.bold);
+            globalY -= 12;
+            drawText(`Ph: ${booking.receiverDetails?.phone || ''}`, margin, globalY, 10, fonts.bold);
+            globalY -= 20;
+
+            page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
+            globalY -= 15;
+
+            // Sender (FROM)
+            drawText('FROM (SENDER):', margin, globalY, 10, fonts.bold);
+            globalY -= 12;
+            drawText(booking.senderDetails?.name || 'N/A', margin, globalY, 9, fonts.bold);
+            globalY -= 12;
+
+            const sAddr = booking.senderDetails?.address || '';
+            const sWords = sAddr.split(' ');
+            let sLine = '';
+            for (const w of sWords) {
+                if (fonts.regular.widthOfTextAtSize(sLine + w + ' ', 9) > (width - margin * 2)) {
+                    drawText(sLine, margin, globalY, 9, fonts.regular);
+                    sLine = w + ' ';
+                    globalY -= 10;
+                } else {
+                    sLine += w + ' ';
+                }
+            }
+            drawText(sLine, margin, globalY, 9, fonts.regular);
+            globalY -= 12;
+            if (booking.serviceType === 'campus-parcel') {
+                drawText('IIT ISM Dhanbad - 826004', margin, globalY, 10, fonts.bold);
             } else {
-                rLine += w + ' ';
+                drawText(`${booking.senderDetails?.city || ''} - ${booking.senderDetails?.pincode || ''}`, margin, globalY, 10, fonts.bold);
             }
-        }
-        drawText(rLine, margin, globalY, 9, fonts.regular);
-        globalY -= 12;
-        drawText(`${booking.receiverDetails?.pincode || ''} - ${booking.receiverDetails?.city || ''}`, margin, globalY, 10, fonts.bold);
-        globalY -= 12;
-        drawText(`Ph: ${booking.receiverDetails?.phone || ''}`, margin, globalY, 10, fonts.bold);
-        globalY -= 20;
+            globalY -= 12;
+            drawText(`Ph: ${booking.senderDetails?.phone || ''}`, margin, globalY, 9, fonts.regular);
+            globalY -= 20;
 
-        page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
-        globalY -= 15;
+            page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
+            globalY -= 15;
 
-        // Sender (FROM)
-        drawText('FROM (SENDER):', margin, globalY, 10, fonts.bold);
-        globalY -= 12;
-        drawText(booking.senderDetails?.name || 'N/A', margin, globalY, 9, fonts.bold);
-        globalY -= 12;
-        
-        const sAddr = booking.senderDetails?.address || '';
-        const sWords = sAddr.split(' ');
-        let sLine = '';
-        for (const w of sWords) {
-            if (fonts.regular.widthOfTextAtSize(sLine + w + ' ', 9) > (width - margin * 2)) {
-                drawText(sLine, margin, globalY, 9, fonts.regular);
-                sLine = w + ' ';
-                globalY -= 10;
+            // Package Box Details
+            const isEdl = booking.edl > 0 || booking.packageDetails?.isEdl || (booking.packageDetails?.description && booking.packageDetails.description.toUpperCase().includes('EDL'));
+            if (isEdl) {
+                drawText(`Weight: ${booking.packageDetails?.weight || ''} ${booking.packageDetails?.weightUnit || 'kg'}`, margin, globalY, 10, fonts.bold);
+            }
+
+            globalY -= 12;
+            let ds = 'N/A';
+            if (isEdl && booking.packageDetails?.edlItems) {
+                ds = booking.packageDetails.edlItems.map(item => item.dims).join(', ') + ' cm';
+                drawText(`Dimensions: ${ds}`, margin, globalY, 9, fonts.regular);
             } else {
-                sLine += w + ' ';
+                const dims = booking.packageDetails?.dimensions || {};
+                if (dims.length) {
+                    drawText(`Dimensions: ${dims.length}x${dims.width}x${dims.height} cm`, margin, globalY, 9, fonts.regular);
+                }
             }
-        }
-        drawText(sLine, margin, globalY, 9, fonts.regular);
-        globalY -= 12;
-        if (booking.serviceType === 'campus-parcel') {
-            drawText('IIT ISM Dhanbad - 826004', margin, globalY, 10, fonts.bold);
-        } else {
-            drawText(`${booking.senderDetails?.city || ''} - ${booking.senderDetails?.pincode || ''}`, margin, globalY, 10, fonts.bold);
-        }
-        globalY -= 12;
-        drawText(`Ph: ${booking.senderDetails?.phone || ''}`, margin, globalY, 9, fonts.regular);
-        globalY -= 20;
 
-        page.drawLine({ start: { x: margin, y: globalY }, end: { x: width - margin, y: globalY }, thickness: 1 });
-        globalY -= 15;
+            // --- BOTTOM RED BOX (Box Name) ---
+            const nameRectW = 150;
+            const nameRectH = 40;
+            const nameRectX = margin;
+            const nameRectY = 40; // Adjusted to be above subtext (at 25)
+            page.drawRectangle({ x: nameRectX, y: nameRectY, width: nameRectW, height: nameRectH, borderColor: red, borderWidth: 2 });
+            const nameW = fonts.bold.widthOfTextAtSize(boxName, 14);
+            page.drawText(boxName, { x: nameRectX + (nameRectW / 2) - (nameW / 2), y: nameRectY + 15, size: 14, font: fonts.bold, color: black });
 
-        // Package Box Details
-        const isEdl = booking.edl > 0 || booking.packageDetails?.isEdl || (booking.packageDetails?.description && booking.packageDetails.description.toUpperCase().includes('EDL'));
-        if (isEdl) {
-            drawText(`Weight: ${booking.packageDetails?.weight || ''} ${booking.packageDetails?.weightUnit || 'kg'}`, margin, globalY, 10, fonts.bold);
-        } else {
-            drawText(`Package: ${booking.packageDetails?.description || 'Standard Box'}`, margin, globalY, 10, fonts.bold);
-        }
-        globalY -= 12;
-        let ds = 'N/A';
-        if (isEdl && booking.packageDetails?.edlItems) {
-            ds = booking.packageDetails.edlItems.map(item => item.dims).join(', ') + ' cm';
-            drawText(`Dimensions: ${ds}`, margin, globalY, 9, fonts.regular);
-        } else {
-            const dims = booking.packageDetails?.dimensions || {};
-            if (dims.length) {
-                drawText(`Dimensions: ${dims.length}x${dims.width}x${dims.height} cm`, margin, globalY, 9, fonts.regular);
-            }
-        }
+            // Subtext
+            drawText('Please do not bend. Handle with care.', margin, margin + 10, 8, fonts.regular);
 
-        // Subtext
-        globalY = margin + 10;
-        drawText('Please do not bend. Handle with care.', margin, globalY, 8, fonts.regular);
+        }
 
         const pdfBytes = await pdfDoc.save();
         return Buffer.from(pdfBytes);
     } catch (error) {
-        console.error("PDF Generate Error:", error);
+        console.error("❌ generateLabelPDF ERROR:", error);
         throw error;
     }
 }
+
+
 
 async function generateDeclarationPDF(booking) {
     try {
@@ -554,20 +628,25 @@ async function generateDeclarationPDF(booking) {
         drawText(`Phone: ${booking.senderDetails?.phone || 'N/A'}`, margin, globalY, 11, fonts.regular);
         globalY -= 15;
         drawText(`Address: ${booking.senderDetails?.address || 'N/A'}, ${booking.senderDetails?.city || 'N/A'} - ${booking.senderDetails?.pincode || 'N/A'}`, margin, globalY, 11, fonts.regular);
+        globalY -= 20;
+        drawText(`Declared Value of Items: Rs. ${booking.packageDetails?.itemValue || booking.packageDetails?.value || 'N/A'}`, margin, globalY, 11, fonts.bold);
+
+
 
         // Signature block
         globalY -= 80;
         page.drawLine({ start: { x: margin, y: globalY }, end: { x: margin + 150, y: globalY }, thickness: 1 });
         drawText(`Signature of the Sender`, margin, globalY - 15, 10, fonts.bold);
-        drawText(`Digitally accepted by ${booking.senderDetails?.name || 'Sender'}`, margin, globalY - 30, 9, fonts.oblique);
+        drawText(` accepted by ${booking.senderDetails?.name || 'Sender'}`, margin, globalY - 30, 9, fonts.oblique);
 
         const pdfBytes = await pdfDoc.save();
         return Buffer.from(pdfBytes);
     } catch (error) {
-        console.error("PDF Generate Error:", error);
+        console.error("❌ generateDeclarationPDF ERROR:", error);
         throw error;
     }
 }
+
 
 module.exports = {
     generateReceiptPDF,
