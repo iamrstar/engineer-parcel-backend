@@ -48,12 +48,18 @@ const bookingSchema = new mongoose.Schema(
       totalItems: Number,
       totalBoxes: Number,
       value: Number,
+      itemValue: Number,
       fragile: Boolean,
       isEdl: { type: Boolean, default: false },
       edlItems: [mongoose.Schema.Types.Mixed],
       edlContents: [String],
       otherContentText: String,
+      packagingType: String,
+      packagingDate: String,
+      packagingSlot: String,
+      items: String,
     },
+
     pickupPincode: String,
     deliveryPincode: String,
     pickupMethod: {
