@@ -41,6 +41,16 @@ const sendBookingConfirmation = async (booking, recipient, customAttachments = [
 </p>
 
       <p style="margin-top:20px;">Thank you for choosing <strong>EngineersParcel</strong>! 🚚</p>
+
+      <div style="margin-top:25px; padding:15px; background-color:#fff7ed; border:1px solid #ffedd5; border-radius:8px;">
+        <p style="margin:0; font-weight:bold; color:#9a3412;">📦 IMPORTANT: Shipping Labels</p>
+        <p style="margin:10px 0 0 0; font-size:14px; color:#c2410c;">
+          Please print the attached shipping labels and paste them on your boxes one by one. 
+          If you have multiple boxes, each label will show its box number (e.g., 1/2, 2/2). 
+          <strong>Ensure the correct label is pasted on the correct box name</strong> (Alpha/Nova) as mentioned on the label.
+        </p>
+      </div>
+
       <hr style="margin-top:20px;">
       <p style="font-size:12px; color:#666;">This is an automated email. Please do not reply.</p>
     </div>
@@ -50,20 +60,21 @@ const sendBookingConfirmation = async (booking, recipient, customAttachments = [
   let generatedAttachments = [];
   try {
     const [invoicePdf, labelPdf, declarationPdf] = await Promise.all([
-      pdfService.generateReceiptPDF(booking),
-      pdfService.generateLabelPDF(booking),
-      pdfService.generateDeclarationPDF(booking)
+
+      pdfService.generateReceiptPDF(booking).catch(e => { console.error("Receipt PDF Error:", e); return null; }),
+      pdfService.generateLabelPDF(booking).catch(e => { console.error("Label PDF Error:", e); return null; }),
+      pdfService.generateDeclarationPDF(booking).catch(e => { console.error("Declaration PDF Error:", e); return null; })
     ]);
 
-    generatedAttachments = [
-      { filename: `Receipt_${booking.bookingId}.pdf`, content: invoicePdf },
-      { filename: `Shipping_Label_${booking.bookingId}.pdf`, content: labelPdf },
-      { filename: `Self_Declaration_${booking.bookingId}.pdf`, content: declarationPdf },
-    ];
+    if (invoicePdf) generatedAttachments.push({ filename: `Receipt_${booking.bookingId}.pdf`, content: invoicePdf });
+    if (labelPdf) generatedAttachments.push({ filename: `Shipping_Label_${booking.bookingId}.pdf`, content: labelPdf });
+    if (declarationPdf) generatedAttachments.push({ filename: `Self_Declaration_${booking.bookingId}.pdf`, content: declarationPdf });
+
   } catch (err) {
-    console.error(`❌ PDF Generation Failed for ${booking.bookingId}:`, err.message);
-    // Continue anyway; better to send email without PDFs than no email at all
+    console.error(`❌ PDF Attachment Process Failed for ${booking.bookingId}:`, err.message);
   }
+
+
 
   const finalAttachments = [...customAttachments, ...generatedAttachments];
 
