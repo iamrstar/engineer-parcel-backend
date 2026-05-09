@@ -18,7 +18,7 @@ dotenv.config();
 
   // ✅ CORS configuration
   const allowedOrigins = [
-    "http://localhost:3000", // dev
+    "http://localhost:3000",
     "http://localhost:5173", // vite dev
     "https://engineersparcel.in",
     "https://www.engineersparcel.in",
