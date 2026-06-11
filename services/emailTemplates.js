@@ -92,7 +92,7 @@ const sendBookingConfirmation = async (booking, recipient, customAttachments = [
     }),
     // 2. To Admin
     sendEmail({
-      to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
+      to: "engineersparcel@gmail.com",
       subject: `📢 New Booking Received - ${booking.bookingId}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width:600px; margin:0 auto; background:#fff; padding:20px; border-radius:10px;">
