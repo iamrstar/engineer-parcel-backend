@@ -72,6 +72,7 @@ dotenv.config();
   const paymentRoutes = require("./routes/payments");
 const couponRoutes = require("./routes/coupons"); // ✅ NEW
 const estimatorRoutes = require("./routes/estimator");
+const leadRoutes = require("./routes/leads"); // ✅ NEW
 
   app.use("/api/auth", authRoutes);
   app.use("/api/bookings", bookingRoutes);
@@ -83,6 +84,7 @@ const estimatorRoutes = require("./routes/estimator");
   app.use("/api/payments", paymentRoutes);
 app.use("/api/coupons", couponRoutes); // ✅ Added Coupon Route
 app.use("/api/estimator", estimatorRoutes);
+app.use("/api/leads", leadRoutes); // ✅ Added Leads Route
 
 
 
