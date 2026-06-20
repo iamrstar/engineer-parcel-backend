@@ -13,7 +13,7 @@ const bookingSchema = new mongoose.Schema(
     serviceType: {
       type: String,
       required: true,
-      enum: ["courier", "shifting", "local", "international", "surface", "air", "express", "premium", "campus-parcel"],
+      enum: ["courier", "shifting", "local", "international", "surface", "air", "express", "premium", "campus-parcel", "city-parcel"],
     },
     senderDetails: {
       name: { type: String, required: true },
